@@ -153,6 +153,12 @@ function datumVon(job) {
   return isNaN(t) ? null : t;
 }
 
+function pensumPasst(pensum, p) {
+  const ueberlappt = pensum.von <= p.pensumBis && pensum.bis >= p.pensumVon;
+  const imBereich = pensum.bis <= p.pensumBis || pensum.von < p.pensumBis;
+  return ueberlappt && imBereich;
+}
+
 /* ---------- Trefferquote ---------- */
 
 // Berechnet die Trefferquote einer Stelle (0–100) für ein Profil.
@@ -168,6 +174,10 @@ function matchScore(job, p) {
   if (verboten) return { ausgeblendet: true, grund: verboten, punkte: 0, gruende: [] };
   // Stelle ohne Pensum-Angabe, aber Schalter steht auf «nein»
   if (!pensum && !p.ohnePensum) return { ausgeblendet: true, grund: 'Pensum fehlt', punkte: 0, gruende: [] };
+  // Pensum ausserhalb des Wunschbereichs: ausblenden (Regel aus dem Widget).
+  // Bleibt: Stelle liegt ganz im Bereich oder beginnt darin («60–100 %» bei 60–80 %).
+  // Fällt weg: «100 %», «80–100 %» bei 60–80 %, «20–40 %» bei 60–80 %.
+  if (pensum && !pensumPasst(pensum, p)) return { ausgeblendet: true, grund: 'Pensum', punkte: 0, gruende: [] };
   // Ohne eigenes Stichwort im Titel passt die Stelle fachlich nicht: ausblenden
   // (sonst reichen Ort + Frische + Basis schon für 60 %)
   const treffer = p.stichwoerter.filter((k) => trifftStichwort(titel, k.wort));
@@ -548,6 +558,7 @@ let bearbeiten = false;        // true, wenn ein Schritt aus der Zusammenfassung
 let meldung = null;            // { typ: 'fehler' | 'ok', text }
 let cvText = '';
 let cvVorschlaege = null;      // null = noch nicht abgeglichen
+let cvStatus = null;           // { typ: 'laeuft' | 'fehler' | 'ok', text }
 
 function oeffneProfil() {
   cvText = '';
@@ -569,6 +580,7 @@ function oeffneProfil() {
 function gehe(neu) {
   ansicht = neu;
   gpsStatus = null;
+  cvStatus = null;
   meldung = null;
   zeichne();
   $('profil').scrollTop = 0;
@@ -704,6 +716,148 @@ function eigenesFeld(id, platzhalter, onAdd, deaktiviert) {
 
 const gleich = (a, b) => a.toLowerCase() === b.toLowerCase();
 
+/* --- CV lesen: PDF, Word (.docx) oder Text --- */
+// Die Datei wird nur im Browser gelesen und nie hochgeladen.
+// Bibliotheken liegen im Projekt (js/lib) und werden erst beim ersten Upload geladen.
+const LIB = (datei) => new URL('js/lib/' + datei, document.baseURI).href;
+let pdfjs = null;
+
+function ladeSkript(src) {
+  return new Promise((ok, fehler) => {
+    const sc = document.createElement('script');
+    sc.src = src;
+    sc.onload = ok;
+    sc.onerror = () => fehler(new Error('laden'));
+    document.head.append(sc);
+  });
+}
+
+async function textAusDatei(datei) {
+  const name = datei.name.toLowerCase();
+  if (datei.size > 10 * 1024 * 1024) throw new Error('zu-gross');
+  if (name.endsWith('.txt') || datei.type === 'text/plain') return datei.text();
+
+  if (name.endsWith('.pdf') || datei.type === 'application/pdf') {
+    if (!pdfjs) {
+      pdfjs = await import(LIB('pdf.min.mjs'));
+      pdfjs.GlobalWorkerOptions.workerSrc = LIB('pdf.worker.min.mjs');
+    }
+    const doc = await pdfjs.getDocument({ data: new Uint8Array(await datei.arrayBuffer()) }).promise;
+    let text = '';
+    for (let i = 1; i <= Math.min(doc.numPages, 10); i++) {
+      const inhalt = await (await doc.getPage(i)).getTextContent();
+      text += inhalt.items.map((it) => it.str).join(' ') + '\n';
+    }
+    return text;
+  }
+
+  if (name.endsWith('.docx')) {
+    if (!window.JSZip) await ladeSkript(LIB('jszip.min.js'));
+    const zip = await window.JSZip.loadAsync(await datei.arrayBuffer());
+    const teil = zip.file('word/document.xml');
+    if (!teil) throw new Error('format');
+    const xml = await teil.async('string');
+    return xml.replace(/<\/w:p>/g, '\n').replace(/<w:tab\/>/g, ' ').replace(/<[^>]+>/g, '')
+      .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
+  }
+  throw new Error('format');
+}
+
+// Stichwörter aus dem CV-Text (inkl. englischer Begriffe wie «Graphic»)
+function cvAbgleichen(hat) {
+  cvVorschlaege = VORSCHLAEGE_STICHWORT.filter((w) => !hat(w) && trifftStichwort(cvText, w));
+}
+
+async function cvHochladen(datei, hat) {
+  cvStatus = { typ: 'laeuft', text: `«${datei.name}» wird gelesen …` };
+  zeichne();
+  try {
+    cvText = (await textAusDatei(datei)).trim();
+    if (cvText.length < 30) throw new Error('leer');
+    cvAbgleichen(hat);
+    cvStatus = { typ: 'ok', text: cvVorschlaege.length
+      ? `${cvVorschlaege.length} passende Stichwörter in «${datei.name}» gefunden.`
+      : `«${datei.name}» gelesen, aber keine neuen Stichwörter gefunden.` };
+  } catch (e) {
+    const grund = e && e.message;
+    cvStatus = { typ: 'fehler', text:
+      grund === 'zu-gross' ? 'Die Datei ist grösser als 10 MB.'
+        : grund === 'format' ? 'Bitte eine PDF-, Word- (.docx) oder Textdatei wählen.'
+          : grund === 'leer' ? 'In der Datei steht kaum Text. Ist das PDF ein eingescanntes Bild? Dann füge den Text unten ein.'
+            : 'Die Datei konnte nicht gelesen werden. Füge den Text unten ein.' };
+  }
+  zeichne();
+}
+
+function cvKarte(box, hat, fuegeHinzu) {
+  const karte = el('section', 'cv-karte');
+  karte.append(el('strong', 'cv-titel', 'Schneller mit deinem CV'));
+  karte.append(el('p', 'hinweis', 'PDF, Word oder Text. Wir schlagen passende Stichwörter vor. Die Datei bleibt auf deinem Gerät.'));
+
+  const input = el('input');
+  input.type = 'file';
+  input.id = 'pf-cv-datei';
+  input.accept = '.pdf,.docx,.txt,application/pdf,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+  input.className = 'unsichtbar';
+  input.addEventListener('change', () => {
+    const datei = input.files[0];
+    input.value = '';
+    if (datei) cvHochladen(datei, hat);
+  });
+  const laeuft = cvStatus && cvStatus.typ === 'laeuft';
+  const lab = el('label', 'btn btn-zweit cv-knopf', laeuft ? 'Wird gelesen …' : (cvText ? 'Anderen CV hochladen' : 'CV hochladen'));
+  lab.setAttribute('for', 'pf-cv-datei');
+  lab.setAttribute('role', 'button');
+  lab.tabIndex = 0;
+  lab.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); input.click(); } });
+  karte.append(input, lab);
+
+  if (cvStatus) {
+    const m = el('p', cvStatus.typ === 'fehler' ? 'fehler' : cvStatus.typ === 'ok' ? 'erfolg' : 'hinweis', cvStatus.text);
+    m.setAttribute('role', 'status');
+    karte.append(m);
+  }
+
+  // Vorschläge bestätigen oder verwerfen
+  if (cvVorschlaege && cvVorschlaege.length) {
+    const kopf = el('div', 'cv-kopf');
+    kopf.append(el('span', 'hinweis', 'Bestätige, was passt:'),
+      knopf('Alle übernehmen', 'mini mini-ja', () => { cvVorschlaege.forEach(fuegeHinzu); cvVorschlaege = []; zeichne(); }));
+    karte.append(kopf);
+    const ul = el('ul', 'wortliste');
+    cvVorschlaege.forEach((w) => {
+      const li = el('li', 'wort-zeile');
+      const weg = () => { cvVorschlaege = cvVorschlaege.filter((x) => x !== w); };
+      const ja = knopf('✓', 'mini mini-ja mini-icon', () => { fuegeHinzu(w); weg(); zeichne(); });
+      ja.setAttribute('aria-label', `${w} übernehmen`);
+      const nein = knopf('✕', 'mini mini-icon', () => { weg(); zeichne(); });
+      nein.setAttribute('aria-label', `${w} verwerfen`);
+      li.append(el('span', 'wort-name', w), ja, nein);
+      ul.append(li);
+    });
+    karte.append(ul);
+  }
+
+  // Alternative: Text einfügen
+  const det = el('details', 'cv');
+  det.append(el('summary', '', 'Oder CV-Text einfügen'));
+  const ta = el('textarea');
+  ta.id = 'pf-cv';
+  ta.rows = 5;
+  ta.placeholder = 'Text aus deinem Lebenslauf hier einfügen';
+  ta.setAttribute('aria-label', 'CV-Text');
+  ta.value = cvText;
+  ta.addEventListener('input', () => { cvText = ta.value; });
+  det.append(ta, knopf('Mit Vorschlägen abgleichen', 'btn btn-zweit', () => {
+    cvAbgleichen(hat);
+    cvStatus = { typ: cvVorschlaege.length ? 'ok' : 'fehler', text: cvVorschlaege.length
+      ? `${cvVorschlaege.length} passende Stichwörter gefunden.` : 'Keine neuen passenden Stichwörter gefunden.' };
+    zeichne();
+  }));
+  karte.append(det);
+  box.append(karte);
+}
+
 /* --- Schritt 1: Was du machst --- */
 function schritt1(box) {
   titelZeile(box, 'Was du machst');
@@ -712,6 +866,9 @@ function schritt1(box) {
   const hat = (w) => entwurf.stichwoerter.some((k) => gleich(k.wort, w));
   const fuegeHinzu = (w) => { if (!hat(w)) entwurf.stichwoerter.push({ wort: w, gewicht: 'mittel' }); };
   const entferne = (w) => { entwurf.stichwoerter = entwurf.stichwoerter.filter((k) => !gleich(k.wort, w)); };
+
+  // CV hochladen: schnellster Weg zu passenden Stichwörtern
+  cvKarte(box, hat, fuegeHinzu);
 
   // Schnellstart mit Paketen
   box.append(el('h3', '', 'Schnellstart'));
@@ -752,40 +909,6 @@ function schritt1(box) {
   box.lastChild.setAttribute('for', 'pf-eigen');
   box.append(eigenesFeld('pf-eigen', 'z. B. Packaging', (w) => { fuegeHinzu(w); zeichne('pf-eigen'); }));
 
-  // Optional: CV-Text mit den Vorschlägen abgleichen
-  const det = el('details', 'cv');
-  det.open = cvVorschlaege !== null || !!cvText;
-  det.append(el('summary', '', 'Optional: CV-Text einfügen'));
-  const ta = el('textarea');
-  ta.id = 'pf-cv';
-  ta.rows = 5;
-  ta.placeholder = 'Text aus deinem Lebenslauf hier einfügen';
-  ta.setAttribute('aria-label', 'CV-Text');
-  ta.value = cvText;
-  ta.addEventListener('input', () => { cvText = ta.value; });
-  det.append(ta, knopf('Mit Vorschlägen abgleichen', 'btn btn-zweit', () => {
-    cvVorschlaege = VORSCHLAEGE_STICHWORT.filter((w) => !hat(w) && enthaelt(cvText, w));
-    zeichne();
-  }));
-  if (cvVorschlaege !== null) {
-    if (!cvVorschlaege.length) det.append(el('p', 'hinweis', 'Keine neuen passenden Stichwörter gefunden.'));
-    else {
-      det.append(el('p', 'hinweis', 'Gefunden. Bestätige oder verwirf jeden Vorschlag:'));
-      const ul = el('ul', 'wortliste');
-      cvVorschlaege.forEach((w) => {
-        const li = el('li', 'wort-zeile');
-        const weg = () => { cvVorschlaege = cvVorschlaege.filter((x) => x !== w); };
-        const ja = knopf('Übernehmen', 'mini mini-ja', () => { fuegeHinzu(w); weg(); zeichne(); });
-        ja.setAttribute('aria-label', `${w} übernehmen`);
-        const nein = knopf('Verwerfen', 'mini', () => { weg(); zeichne(); });
-        nein.setAttribute('aria-label', `${w} verwerfen`);
-        li.append(el('span', 'wort-name', w), ja, nein);
-        ul.append(li);
-      });
-      det.append(ul);
-    }
-  }
-  box.append(det);
 }
 
 /* --- Schritt 2: Erfahrung --- */

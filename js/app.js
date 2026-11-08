@@ -3,6 +3,8 @@
 /* ---------- Konstanten ---------- */
 const KEY_PROFIL = 'jobradar.profil';
 const KEY_CACHE = 'jobradar.cache';
+const KEY_AUSGEBLENDET = 'jobradar.ausgeblendet'; // Stellen, die mit «Passt nicht» weggeklickt wurden
+const PASST_AB = 60;                 // ab dieser Quote oben in der Liste, darunter eingeklappt
 const PROFIL_VERSION = 1;
 const INTERVALL_MS = 60 * 60 * 1000; // 60 Minuten
 const NEU_MS = 24 * 60 * 60 * 1000;  // 24 Stunden
@@ -14,6 +16,17 @@ const VORSCHLAEGE_STICHWORT = [
   'Typografie', 'Polygraf', 'Branding', 'Illustration', 'Webdesign', 'UX', 'UI',
   'Interaction Design', 'Art Direction', 'Motion Design', '3D', 'Game Design'
 ];
+// Starter-Pakete: ein Tipp statt viele einzelne Stichwörter
+const PAKETE = {
+  'Grafik & Print': [['Grafik', 'stark'], ['Layout', 'mittel'], ['Typografie', 'mittel'], ['Gestalter', 'mittel'], ['Polygraf', 'leicht']],
+  'UX/UI & Digital': [['UX', 'stark'], ['UI', 'stark'], ['Interaction Design', 'stark'], ['Webdesign', 'mittel'], ['Digitale Medien', 'leicht']],
+  'Marke & Kommunikation': [['Kommunikationsdesign', 'stark'], ['Branding', 'stark'], ['Visual Design', 'mittel'], ['Art Direction', 'mittel']],
+  'Content & Social Media': [['Content Creator', 'stark'], ['Social Media', 'stark'], ['Multimedia', 'mittel'], ['Mediamatik', 'leicht']],
+  'Motion & 3D': [['Motion Design', 'stark'], ['3D', 'mittel'], ['Illustration', 'leicht'], ['Game Design', 'leicht']]
+};
+// Wörter, die beim «Passt nicht» nicht zum Ausblenden angeboten werden
+const FUELLWOERTER = ['designer', 'design', 'designerin', 'junior', 'senior', 'stelle', 'team', 'gmbh', 'mwd', 'oder', 'und', 'mit', 'für', 'als', 'unser', 'unsere', 'ihre'];
+
 const VORSCHLAEGE_AUSSCHLUSS = [
   'Maschinen', 'Konstrukteur', 'Elektro', 'Engineer', 'Entwickler', 'Developer', 'Interior',
   'Mode', 'Fashion', 'Verkauf', 'Sales', 'Lehrstelle', 'Lernende', 'Praktikum'
@@ -57,6 +70,7 @@ let jobs = [];          // zuletzt geladene Stellen
 let stand = null;       // Zeitpunkt der letzten Aktualisierung
 let offline = false;    // true, wenn Daten aus dem Cache stammen
 let live = false;       // true = echte Stellen von /api/jobs, false = Beispieldaten
+let ausgeblendet = [];  // Schlüssel der weggeklickten Stellen
 
 /* ---------- Hilfsfunktionen ---------- */
 const $ = (id) => document.getElementById(id);
@@ -154,9 +168,10 @@ function matchScore(job, p) {
   if (verboten) return { ausgeblendet: true, grund: verboten, punkte: 0, gruende: [] };
   // Stelle ohne Pensum-Angabe, aber Schalter steht auf «nein»
   if (!pensum && !p.ohnePensum) return { ausgeblendet: true, grund: 'Pensum fehlt', punkte: 0, gruende: [] };
-  // Echte Portale liefern auch fachfremde Treffer: ohne eigenes Stichwort im Titel ausblenden
+  // Ohne eigenes Stichwort im Titel passt die Stelle fachlich nicht: ausblenden
+  // (sonst reichen Ort + Frische + Basis schon für 60 %)
   const treffer = p.stichwoerter.filter((k) => trifftStichwort(titel, k.wort));
-  if (live && !treffer.length) return { ausgeblendet: true, grund: 'Kein Stichwort', punkte: 0, gruende: [] };
+  if (!treffer.length) return { ausgeblendet: true, grund: 'Kein Stichwort', punkte: 0, gruende: [] };
 
   let summe = 30; // Basis
   const gruende = [];
@@ -357,9 +372,11 @@ function zeigeListe() {
 
   // Ausgeblendete Stellen entfernen, Rest absteigend nach Trefferquote (bei Gleichstand: neuste zuerst)
   const treffer = jobs
+    .filter((j) => !ausgeblendet.includes(jobKey(j)))
     .map((j) => ({ job: j, score: matchScore(j, profil) }))
     .filter((t) => !t.score.ausgeblendet)
-    .sort((a, b) => b.score.punkte - a.score.punkte || (datumVon(b.job) || 0) - (datumVon(a.job) || 0));
+    // Neueste zuerst; Stellen ohne Datum ans Ende, bei gleichem Datum die höhere Quote
+    .sort((a, b) => (datumVon(b.job) || 0) - (datumVon(a.job) || 0) || b.score.punkte - a.score.punkte);
 
   if (!treffer.length) {
     const box = el('div', 'leer');
@@ -372,7 +389,52 @@ function zeigeListe() {
     return;
   }
 
-  liste.replaceChildren(...treffer.map(({ job, score }) => karte(job, score)));
+  // Gute Treffer oben, der Rest eingeklappt. So muss niemand selbst aussortieren.
+  const gut = treffer.filter((t) => t.score.punkte >= PASST_AB);
+  const rest = treffer.filter((t) => t.score.punkte < PASST_AB);
+  const teile = [];
+  if (gut.length) {
+    teile.push(el('p', 'liste-titel', `${gut.length} passende ${gut.length === 1 ? 'Stelle' : 'Stellen'} · neueste zuerst`));
+    gut.forEach(({ job, score }) => teile.push(karte(job, score)));
+  } else {
+    const box = el('div', 'leer leer-klein');
+    box.append(el('p', '', 'Gerade keine Stelle über ' + PASST_AB + ' %. Unten findest du die nächstbesten.'));
+    teile.push(box);
+  }
+  if (rest.length) {
+    const det = el('details', 'weitere');
+    det.open = !gut.length;
+    det.append(el('summary', '', `Weitere Stellen (${rest.length})`));
+    rest.forEach(({ job, score }) => det.append(karte(job, score)));
+    teile.push(det);
+  }
+  liste.replaceChildren(...teile);
+}
+
+// «heute», «gestern», «vor 3 Tagen»
+function alterText(job) {
+  const d = datumVon(job);
+  if (d === null) return 'Datum unbekannt';
+  const heute = new Date(); heute.setHours(0, 0, 0, 0);
+  const tag = new Date(d); tag.setHours(0, 0, 0, 0);
+  const n = Math.round((heute - tag) / 86400000);
+  if (n <= 0) return 'Heute';
+  if (n === 1) return 'Gestern';
+  if (n < 7) return `Vor ${n} Tagen`;
+  return tag.toLocaleDateString('de-CH', { day: 'numeric', month: 'short' });
+}
+
+// Eindeutiger Schlüssel einer Stelle (auch für Beispieldaten ohne Portal-ID)
+function jobKey(job) {
+  return String(job.id || '') + '|' + String(job.titel || '').toLowerCase() + '|' + String(job.firma || '').toLowerCase();
+}
+
+// Kurz und verständlich, warum eine Stelle passt: «Grafik · Lenzburg · 60–80 %»
+function begruendung(job, score) {
+  const plus = score.gruende.filter((g) => g.wert > 0 && g.text !== 'Frisch')
+    .map((g) => (g.text.startsWith('Pensum') ? pensumText(pensumVon(job)) : g.text));
+  const minus = score.gruende.filter((g) => g.wert < 0).map((g) => g.text);
+  return { plus: plus.slice(0, 3), minus: minus.slice(0, 2) };
 }
 
 function karte(job, score) {
@@ -386,7 +448,14 @@ function karte(job, score) {
   const titel = el('div', 'karte-titel', job.titel);
   if (quote >= TOP_AB) titel.append(el('span', 'badge-top', 'Top'));
   if (jung) titel.append(el('span', 'badge-neu', 'Neu'));
-  text.append(titel, el('div', 'karte-meta', [job.firma, job.ort, pensumText(pensumVon(job))].filter(Boolean).join(' · ')));
+  text.append(el('div', 'karte-alter', alterText(job)), titel, el('div', 'karte-meta', [job.firma, job.ort, pensumText(pensumVon(job))].filter(Boolean).join(' · ')));
+  const b = begruendung(job, score);
+  if (b.plus.length || b.minus.length) {
+    const g = el('div', 'karte-grund');
+    if (b.plus.length) g.append(el('span', 'grund-plus', '✓ ' + b.plus.join(' · ')));
+    if (b.minus.length) g.append(el('span', 'grund-minus', '– ' + b.minus.join(' · ')));
+    text.append(g);
+  }
 
   const q = el('div', 'quote', String(quote));
   q.append(el('small', '', ' %'));
@@ -433,7 +502,42 @@ function oeffneSteckbrief(job, score) {
     link.rel = 'noopener noreferrer';
     box.append(link);
   }
+  box.append(knopf('Passt nicht', 'btn btn-zweit passt-nicht', () => passtNicht(job)));
   $('steckbrief').showModal();
+}
+
+/* ---------- «Passt nicht»: Stelle ausblenden und daraus lernen ---------- */
+function passtNicht(job) {
+  ausgeblendet = [...ausgeblendet.filter((k) => k !== jobKey(job)), jobKey(job)].slice(-300);
+  schreiben(KEY_AUSGEBLENDET, ausgeblendet);
+  zeigeListe();
+
+  // Wörter aus dem Titel anbieten, damit ähnliche Stellen künftig gar nicht erscheinen
+  const woerter = [...new Set(String(job.titel).split(/[^\p{L}0-9]+/u).filter(Boolean))]
+    .filter((w) => w.length >= 4 && !FUELLWOERTER.includes(w.toLowerCase()))
+    .filter((w) => !profil.stichwoerter.some((k) => trifftStichwort(w, k.wort)))
+    .slice(0, 8);
+
+  const box = $('sb-inhalt');
+  const h = el('h2', '', 'Ausgeblendet');
+  h.id = 'sb-titel';
+  box.replaceChildren(h, el('p', 'hinweis', 'Die Stelle erscheint nicht mehr.'));
+  if (woerter.length) {
+    box.append(el('h3', '', 'Solche Stellen künftig ausblenden?'));
+    box.append(el('p', 'hinweis', 'Tippe Wörter an, die du nie im Stellentitel sehen willst.'));
+    const hat = (w) => profil.ausschluss.some((x) => gleich(x, w));
+    const zeichneChips = () => {
+      const g = chipGruppe(woerter, hat, (w) => {
+        profil.ausschluss = hat(w) ? profil.ausschluss.filter((x) => !gleich(x, w)) : [...profil.ausschluss, w];
+        schreiben(KEY_PROFIL, profil);
+        zeigeListe();
+        g.replaceWith(zeichneChips());
+      }, 'Wörter ausblenden');
+      return g;
+    };
+    box.append(zeichneChips());
+  }
+  box.append(knopf('Fertig', 'btn', () => $('steckbrief').close()));
 }
 
 /* ---------- Profil-Dialog: Onboarding und Verwalten ---------- */
@@ -575,12 +679,30 @@ const gleich = (a, b) => a.toLowerCase() === b.toLowerCase();
 /* --- Schritt 1: Was du machst --- */
 function schritt1(box) {
   titelZeile(box, 'Was du machst');
-  box.append(el('p', 'hinweis', 'Tippe passende Stichwörter an und gewichte sie. Je stärker, desto mehr Punkte, wenn das Wort im Stellentitel steht.'));
+  box.append(el('p', 'hinweis', 'Wähle ein oder mehrere Pakete. Feinjustieren kannst du darunter: Je stärker ein Stichwort, desto mehr Punkte, wenn es im Stellentitel steht.'));
 
   const hat = (w) => entwurf.stichwoerter.some((k) => gleich(k.wort, w));
   const fuegeHinzu = (w) => { if (!hat(w)) entwurf.stichwoerter.push({ wort: w, gewicht: 'mittel' }); };
   const entferne = (w) => { entwurf.stichwoerter = entwurf.stichwoerter.filter((k) => !gleich(k.wort, w)); };
 
+  // Schnellstart mit Paketen
+  box.append(el('h3', '', 'Schnellstart'));
+  const pg = el('div', 'chips pakete');
+  pg.setAttribute('role', 'group');
+  pg.setAttribute('aria-label', 'Starter-Pakete');
+  Object.entries(PAKETE).forEach(([name, woerter]) => {
+    const aktiv = woerter.every(([w]) => hat(w));
+    const c = knopf(name, 'chip chip-paket', () => {
+      if (aktiv) woerter.forEach(([w]) => entferne(w));
+      else woerter.forEach(([w, g]) => { if (!hat(w)) entwurf.stichwoerter.push({ wort: w, gewicht: g }); });
+      zeichne();
+    });
+    c.setAttribute('aria-pressed', String(aktiv));
+    pg.append(c);
+  });
+  box.append(pg);
+
+  box.append(el('h3', '', 'Einzelne Stichwörter'));
   box.append(chipGruppe(VORSCHLAEGE_STICHWORT, hat, (w) => { if (hat(w)) entferne(w); else fuegeHinzu(w); zeichne(); }, 'Vorschläge'));
 
   if (entwurf.stichwoerter.length) {
@@ -927,6 +1049,15 @@ function zeichneZusammenfassung(box) {
       knopf('Importieren (.json)', 'btn btn-zweit', () => $('pf-datei').click()),
       knopf('Profil löschen', 'btn btn-gefahr', () => gehe('loeschen'))
     );
+    if (ausgeblendet.length) {
+      sicher.append(knopf(`Ausgeblendete Stellen wieder zeigen (${ausgeblendet.length})`, 'btn btn-zweit', () => {
+        ausgeblendet = [];
+        schreiben(KEY_AUSGEBLENDET, ausgeblendet);
+        zeigeListe();
+        meldung = { typ: 'ok', text: 'Alle Stellen werden wieder angezeigt.' };
+        zeichne();
+      }));
+    }
     box.append(sicher);
   }
 }
@@ -1024,6 +1155,8 @@ function init() {
   });
 
   profil = profilBereinigen(lesen(KEY_PROFIL));
+  const weg = lesen(KEY_AUSGEBLENDET);
+  ausgeblendet = Array.isArray(weg) ? weg.filter((k) => typeof k === 'string') : [];
   if (!profil) oeffneProfil(); // Kein (gültiges) Profil: Onboarding
 
   ladeJobs();

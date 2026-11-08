@@ -389,3 +389,26 @@ textarea {
 .vorschlaege .info { color: var(--text-gedaempft); font-size: 0.85rem; }
 .ort-info:empty { display: none; }
 .ort-info { margin-top: 6px; color: var(--fehler); }
+
+/* ---------- Liste: passende oben, Rest eingeklappt ---------- */
+.liste-titel { font-size: 0.85rem; font-weight: 700; color: var(--text-gedaempft); text-transform: uppercase; letter-spacing: 0.04em; margin-top: 4px; }
+.leer-klein { padding: 16px; }
+.leer-klein p { margin-bottom: 0; }
+.weitere { display: flex; flex-direction: column; gap: 12px; margin-top: 8px; }
+.weitere summary { cursor: pointer; font-weight: 600; color: var(--akzent); min-height: 44px; display: flex; align-items: center; }
+.weitere[open] > .karte + .karte,
+.weitere[open] > summary + .karte { margin-top: 12px; }
+
+/* Begründung auf der Karte */
+.karte-grund { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 6px; font-size: 0.85rem; }
+.grund-plus { color: var(--gruen); font-weight: 600; }
+.grund-minus { color: var(--fehler); }
+
+/* Passt nicht + Pakete */
+.passt-nicht { margin-top: 10px; }
+#sb-inhalt > .btn + .btn { margin-top: 10px; }
+#sb-inhalt h3 { margin-top: 20px; }
+.chip-paket { font-weight: 600; }
+
+/* Alter der Stelle auf der Karte */
+.karte-alter { font-size: 0.78rem; font-weight: 700; color: var(--akzent); margin-bottom: 2px; }

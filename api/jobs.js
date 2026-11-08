@@ -289,6 +289,24 @@ const PARSE = {
 };
 const PERSOENLICH_SEITEN = ['https://persoenlich.com/stellenmarkt/', 'https://persoenlich.com/stellenmarkt/?page=2'];
 
+/* ---------- Fachfremde Stellen aussortieren ---------- */
+// Portale finden bei «Designer» auch Technik-Stellen (Tooling Designer, Chip-Designer …).
+// Diese Wörter im Titel schliessen eine Stelle aus, ausser es steht klar Grafik/UX/UI drin.
+// Liste aus dem Scriptable-Widget, ergänzt um Werkzeug- und Fertigungsbegriffe.
+const TECHNIK = [
+  'maschinen', 'mechanical', 'mechanik', 'konstrukt', 'elektro', 'electrical', 'hardware',
+  'chip', 'asic', 'fpga', 'pcb', 'ic designer', 'analog', 'silicon', 'rf ', 'rf/',
+  'werkzeug', 'tooling', 'turbin', 'cad', 'fertigung', 'manufacturing', 'process engineer',
+  'engineer', 'developer', 'entwickler', 'security', 'solution architect', 'architekt',
+  'hochbau', 'tiefbau', 'sanitär', 'heizung', 'lüftung', 'monteur', 'interior', 'innenarch',
+  'küche', 'garten', 'schmuck'
+];
+function istFachfremd(titel) {
+  const t = ' ' + String(titel).toLowerCase() + ' ';
+  if (!TECHNIK.some((w) => t.includes(w))) return false;
+  return !/\bux\b|\bui\b|grafik|graphic|kommunikationsdesign|communication design|visual/.test(t);
+}
+
 /* ---------- Zusammenführen ---------- */
 function norm(s) {
   return String(s || '').toLowerCase()
@@ -345,6 +363,7 @@ async function sammle(terms, places) {
   const gruppen = {};
   for (const j of roh) {
     if (j.posted && j.posted < grenze) continue;
+    if (istFachfremd(j.title)) continue;
     const k = norm(j.title) + '|' + norm(j.company);
     const g = gruppen[k];
     if (!g) {
@@ -395,4 +414,4 @@ module.exports = async (req, res) => {
 };
 
 // Für lokale Tests
-module.exports.intern = { PARSE, sammle, norm, cleanPlace, liste, enthaeltOrt };
+module.exports.intern = { PARSE, sammle, norm, cleanPlace, liste, enthaeltOrt, istFachfremd };

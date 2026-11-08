@@ -47,8 +47,7 @@ const ALIAS = {
   illustration: ['illustrator'],
   'digitale medien': ['digital media'],
   'art direction': ['art director'],
-  'motion design': ['motion designer'],
-  gestalter: ['designer']
+  'motion design': ['motion designer']
 };
 const QUELLEN_NAME = { jobscout: 'JobScout24', jobsch: 'jobs.ch', jobup: 'jobup.ch', linkedin: 'LinkedIn', persoenlich: 'persoenlich.com' };
 

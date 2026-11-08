@@ -412,3 +412,91 @@ textarea {
 
 /* Alter der Stelle auf der Karte */
 .karte-alter { font-size: 0.78rem; font-weight: 700; color: var(--akzent); margin-bottom: 2px; }
+
+/* ---------- Profil & Onboarding als eigene Seite (kein Pop-up) ---------- */
+.dialog.seite {
+  width: 100%;
+  max-width: none;
+  height: 100%;
+  max-height: none;
+  margin: 0;
+  border-radius: 0;
+  background: var(--hintergrund);
+}
+.dialog.seite::backdrop { background: var(--hintergrund); }
+.seite .dialog-inhalt {
+  max-width: 480px;
+  min-height: 100%;
+  margin: 0 auto;
+  padding: 28px 20px 0;
+  background: var(--flaeche);
+  display: flex;
+  flex-direction: column;
+}
+.seite #pf-inhalt { flex: 1; display: flex; flex-direction: column; }
+.seite h2 { font-size: 1.6rem; letter-spacing: -0.02em; margin-bottom: 6px; }
+.seite .hinweis { font-size: 0.95rem; }
+
+/* Fortschritt in 4 Segmenten */
+.seite .fortschritt { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; height: 6px; background: none; margin-bottom: 24px; }
+.seite .fortschritt span { background: var(--linie); border-radius: 99px; }
+.seite .fortschritt span.fertig,
+.seite .fortschritt span.aktuell { background: var(--akzent); }
+.seite .schritt-text { font-weight: 600; color: var(--akzent); }
+
+/* Navigation klebt unten */
+.seite .navzeile {
+  position: sticky;
+  bottom: 0;
+  margin: auto -20px 0;
+  padding: 14px 20px calc(14px + env(safe-area-inset-bottom));
+  background: var(--flaeche);
+  border-top: 1px solid var(--linie);
+  z-index: 4;
+}
+.seite .navzeile ~ .link-btn { margin-bottom: 16px; }
+.seite #pf-inhalt > .btn:last-of-type { margin-bottom: 24px; }
+.seite .sichern { margin-bottom: 32px; }
+
+/* ---------- Startbildschirm ---------- */
+.ist-start .dialog-inhalt { padding-top: 0; }
+.start-hero {
+  margin: 0 -20px;
+  padding: 48px 24px 32px;
+  color: #fff;
+  background:
+    radial-gradient(circle at 85% 10%, rgba(255, 255, 255, 0.18) 0 60px, transparent 61px),
+    radial-gradient(circle at 85% 10%, transparent 0 110px, rgba(255, 255, 255, 0.1) 111px 112px, transparent 113px),
+    radial-gradient(circle at 85% 10%, transparent 0 170px, rgba(255, 255, 255, 0.08) 171px 172px, transparent 173px),
+    linear-gradient(160deg, var(--akzent) 0%, var(--akzent-dunkel) 100%);
+  border-radius: 0 0 28px 28px;
+}
+.start-marke { color: #fff; margin-bottom: 18px; }
+.start-name { font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; font-size: 0.8rem; opacity: 0.8; }
+.seite .start-titel { font-size: 2.1rem; line-height: 1.1; margin: 6px 0 14px; padding-right: 0; color: #fff; }
+.start-titel span { color: #c7d2fe; }
+.start-lead { font-size: 1rem; line-height: 1.5; color: #e0e7ff; }
+
+.start-vorteile { list-style: none; padding: 0; margin: 28px 0 8px; display: flex; flex-direction: column; gap: 18px; }
+.start-vorteile li { display: flex; gap: 14px; align-items: flex-start; }
+.vorteil-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: var(--akzent-hell);
+  color: var(--akzent);
+  font-weight: 800;
+}
+.start-vorteile strong { display: block; }
+.start-vorteile span { color: var(--text-gedaempft); font-size: 0.92rem; }
+
+.start-aktionen { margin-top: auto; padding-top: 24px; gap: 4px; }
+.btn-gross { min-height: 56px; font-size: 1.1rem; border-radius: 16px; }
+.start-fuss { text-align: center; font-size: 0.82rem; color: var(--text-gedaempft); margin: 4px 0 calc(24px + env(safe-area-inset-bottom)); }
+
+/* Profil-Seite: Schliessen oben rechts gut sichtbar */
+.seite .schliessen { top: 16px; right: max(12px, calc(50% - 228px)); position: fixed; background: var(--flaeche); z-index: 5; }
+.ist-start .schliessen { color: #fff; background: transparent; }

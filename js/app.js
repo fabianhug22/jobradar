@@ -576,7 +576,8 @@ function gehe(neu) {
 function zeichne(fokusId) {
   const box = $('pf-inhalt');
   box.replaceChildren();
-  $('pf-x').hidden = !profil; // Beim ersten Start kann der Dialog nicht geschlossen werden
+  $('pf-x').hidden = !profil; // Beim ersten Start kann die Seite nicht geschlossen werden
+  $('profil').classList.toggle('ist-start', ansicht === 'start');
 
   if (ansicht === 'start') zeichneStart(box);
   else if (ansicht === 'zusammenfassung') zeichneZusammenfassung(box);
@@ -589,10 +590,10 @@ function zeichne(fokusId) {
     fort.setAttribute('aria-valuemax', '4');
     fort.setAttribute('aria-valuenow', String(ansicht));
     fort.setAttribute('aria-label', `Schritt ${ansicht} von 4`);
-    const balken = el('span');
-    balken.style.width = `${ansicht * 25}%`;
-    fort.append(balken);
-    box.append(el('p', 'schritt-text', `Schritt ${ansicht} von 4`), fort);
+    // 4 Segmente: erledigt, aktuell, offen
+    [1, 2, 3, 4].forEach((n) => fort.append(el('span', n < ansicht ? 'fertig' : n === ansicht ? 'aktuell' : '')));
+    const namen = ['Was du machst', 'Erfahrung', 'Wo und wie viel', 'Was du nicht willst'];
+    box.append(el('p', 'schritt-text', `Schritt ${ansicht} von 4 · ${namen[ansicht - 1]}`), fort);
     [schritt1, schritt2, schritt3, schritt4][ansicht - 1](box);
     zeichneNavigation(box);
   }
@@ -614,15 +615,41 @@ function zeigeMeldung(box) {
 
 /* --- Start-Screen --- */
 function zeichneStart(box) {
-  titelZeile(box, 'Willkommen bei Jobradar');
-  box.append(el('p', 'hinweis', 'Erstelle dein Suchprofil. Wir sortieren die Stellen danach. Dein Profil bleibt auf diesem Gerät.'));
+  const hero = el('div', 'start-hero');
+  // Radar-Zeichen (dekorativ)
+  const marke = el('div', 'start-marke');
+  marke.setAttribute('aria-hidden', 'true');
+  marke.innerHTML = '<svg viewBox="0 0 64 64" width="64" height="64" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><circle cx="32" cy="32" r="26" opacity=".35"/><circle cx="32" cy="32" r="16" opacity=".6"/><circle cx="32" cy="32" r="4" fill="currentColor" stroke="none"/><path d="M32 32 L52 16"/><circle cx="46" cy="22" r="3.5" fill="currentColor" stroke="none"/></svg>';
+  const h = el('h2', 'start-titel', 'Alle Kreativ-Jobs.');
+  h.id = 'pf-titel';
+  h.append(el('br'), el('span', '', 'Ein Ort. Stündlich neu.'));
+  hero.append(marke, el('p', 'start-name', 'Jobradar'), h, el('p', 'start-lead',
+    'Schluss mit zig Jobportalen. Jobradar durchsucht jobs.ch, jobup.ch, JobScout24, LinkedIn und persoenlich.com für dich und zeigt zuerst, was wirklich passt.'));
+  box.append(hero);
+
+  const vorteile = el('ul', 'start-vorteile');
+  [
+    ['1', 'In 2 Minuten eingerichtet', 'Wähle ein Paket wie «Grafik & Print» und deine Orte.'],
+    ['%', 'Trefferquote mit Begründung', 'Du siehst sofort, warum eine Stelle passt.'],
+    ['↑', 'Neueste Stellen zuoberst', 'Damit du dich als Erste:r bewirbst.']
+  ].forEach(([icon, titel, text]) => {
+    const li = el('li');
+    const i = el('span', 'vorteil-icon', icon);
+    i.setAttribute('aria-hidden', 'true');
+    const t = el('div');
+    t.append(el('strong', '', titel), el('span', '', text));
+    li.append(i, t);
+    vorteile.append(li);
+  });
+  box.append(vorteile);
+
   zeigeMeldung(box);
-  const aktionen = el('div', 'aktionen');
+  const aktionen = el('div', 'aktionen start-aktionen');
   aktionen.append(
-    knopf('Profil erstellen', 'btn', () => gehe(1)),
-    knopf('Profil importieren (.json)', 'btn btn-zweit', () => $('pf-datei').click())
+    knopf('Los geht’s', 'btn btn-gross', () => gehe(1)),
+    knopf('Profil importieren (.json)', 'link-btn', () => $('pf-datei').click())
   );
-  box.append(aktionen);
+  box.append(aktionen, el('p', 'start-fuss', 'Kein Login. Dein Profil bleibt auf diesem Gerät.'));
 }
 
 /* --- Bausteine für die Schritte --- */

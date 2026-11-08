@@ -1,0 +1,17 @@
+[
+  { "id": 1,  "titel": "Junior Grafikdesigner:in",            "firma": "Atelier Seetal",          "ort": "Frauenfeld",  "pensum": "60–80 %",  "link": "https://example.com/jobs/1",  "datum": "2026-11-08T08:00:00" },
+  { "id": 2,  "titel": "Grafiker:in EFZ",                      "firma": "Druckerei Murg AG",       "ort": "Winterthur",  "pensum": "80 %",     "link": "https://example.com/jobs/2",  "datum": "2026-11-06T09:30:00" },
+  { "id": 3,  "titel": "Senior UX Designer:in",                "firma": "Limmat Digital AG",       "ort": "Zürich",      "pensum": "80–100 %", "link": "https://example.com/jobs/3",  "datum": "2026-11-07T14:00:00" },
+  { "id": 4,  "titel": "Lead UX Designer:in",                  "firma": "FinStack Schweiz AG",     "ort": "Zürich",      "pensum": "100 %",    "link": "https://example.com/jobs/4",  "datum": "2026-11-03T10:00:00" },
+  { "id": 5,  "titel": "UX/UI Designer:in",                    "firma": "Helvetia Apps GmbH",      "ort": "Zürich",      "pensum": "60 bis 80%", "link": "https://example.com/jobs/5", "datum": "2026-10-30T11:00:00" },
+  { "id": 6,  "titel": "Head of Design",                       "firma": "Brandwerk Zürich",        "ort": "Zürich",      "pensum": "100 %",    "link": "https://example.com/jobs/6",  "datum": "2026-10-27T08:30:00" },
+  { "id": 7,  "titel": "Senior Grafikdesigner:in",             "firma": "Thurgauer Medienhaus",    "ort": "Frauenfeld",  "pensum": "80–100 %", "link": "https://example.com/jobs/7",  "datum": "2026-11-05T16:00:00" },
+  { "id": 8,  "titel": "Mediamatiker:in",                      "firma": "Kantonsverwaltung",       "ort": "Frauenfeld",  "pensum": null,       "link": "https://example.com/jobs/8",  "datum": "2026-11-02T07:45:00" },
+  { "id": 9,  "titel": "Junior UX Designer:in",                "firma": "Eulachtal Software AG",   "ort": "Winterthur",  "pensum": "60–80 %",  "link": "https://example.com/jobs/9",  "datum": "2026-10-24T13:15:00" },
+  { "id": 10, "titel": "Art Direction & Konzept",              "firma": "Rosenberg Kommunikation", "ort": "Zürich",      "pensum": "80–100 %", "link": "https://example.com/jobs/10", "datum": "2026-10-19T09:00:00" },
+  { "id": 11, "titel": "Konstrukteur:in Maschinenbau",         "firma": "Technik Thurtal AG",      "ort": "Frauenfeld",  "pensum": "100 %",    "link": "https://example.com/jobs/11", "datum": "2026-11-04T12:00:00" },
+  { "id": 12, "titel": "Webdesigner:in 70–90%",                "firma": "Pixelhof GmbH",           "ort": "Winterthur",  "pensum": null,       "link": "https://example.com/jobs/12", "datum": "2026-10-14T10:20:00" },
+  { "id": 13, "titel": "Praktikum Kommunikationsdesign",       "firma": "Agentur Nordlicht",       "ort": "Zürich",      "pensum": "100 %",    "link": "https://example.com/jobs/13", "datum": "2026-10-31T15:40:00" },
+  { "id": 14, "titel": "Motion Designer:in",                   "firma": "Bewegtbild Studio",       "ort": "Zürich",      "pensum": "60 %",     "link": "https://example.com/jobs/14", "datum": "2026-10-09T09:10:00" },
+  { "id": 15, "titel": "Game Designer:in",                     "firma": "Rheinspiel Studios",      "ort": "Basel",       "pensum": null,       "link": "https://example.com/jobs/15", "datum": "2026-09-29T08:00:00" }
+]

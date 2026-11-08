@@ -568,6 +568,7 @@ function oeffneProfil() {
 
 function gehe(neu) {
   ansicht = neu;
+  gpsStatus = null;
   meldung = null;
   zeichne();
   $('profil').scrollTop = 0;
@@ -817,6 +818,69 @@ const KANTONE = [
 ];
 const ORT_API = 'https://api3.geo.admin.ch/rest/services/api/SearchServer?type=locations&origins=gg25&limit=8&searchText=';
 
+/* --- GPS: Standort → Gemeinde und Kanton --- */
+// Koordinaten werden nur an swisstopo geschickt, um die Gemeinde zu finden. Nichts wird gespeichert.
+const GEMEINDE_API = 'https://api3.geo.admin.ch/rest/services/api/MapServer/identify'
+  + '?geometryType=esriGeometryPoint&sr=4326&tolerance=0&returnGeometry=false'
+  + '&layers=all:ch.swisstopo.swissboundaries3d-gemeinde-flaeche.fill&geometry=';
+const KANTON_ABK = {
+  AG: 'Aargau', AR: 'Appenzell Ausserrhoden', AI: 'Appenzell Innerrhoden', BL: 'Basel-Landschaft',
+  BS: 'Basel-Stadt', BE: 'Bern', FR: 'Freiburg', GE: 'Genf', GL: 'Glarus', GR: 'Graubünden',
+  JU: 'Jura', LU: 'Luzern', NE: 'Neuenburg', NW: 'Nidwalden', OW: 'Obwalden', SH: 'Schaffhausen',
+  SZ: 'Schwyz', SO: 'Solothurn', SG: 'St. Gallen', TI: 'Tessin', TG: 'Thurgau', UR: 'Uri',
+  VD: 'Waadt', VS: 'Wallis', ZG: 'Zug', ZH: 'Zürich'
+};
+let gpsStatus = null; // { typ: 'laeuft' | 'fehler' | 'ok', text }
+
+function standortHolen() {
+  return new Promise((ok, fehler) => {
+    if (!('geolocation' in navigator)) { fehler(new Error('kein-gps')); return; }
+    navigator.geolocation.getCurrentPosition(ok, fehler, { enableHighAccuracy: false, timeout: 15000, maximumAge: 600000 });
+  });
+}
+
+async function gemeindeAus(lat, lon) {
+  const res = await fetch(GEMEINDE_API + encodeURIComponent(`${lon},${lat}`));
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  const daten = await res.json();
+  // Es gibt mehrere Jahrgänge (historische Grenzen): den aktuellen nehmen, sonst den neusten
+  const alle = daten.results || [];
+  const r = alle.find((x) => x.attributes && x.attributes.is_current_jahr)
+    || alle.slice().sort((a, b) => ((b.attributes || {}).jahr || 0) - ((a.attributes || {}).jahr || 0))[0];
+  if (!r) return null;
+  const a = r.attributes || {};
+  const name = String(a.gemname || a.name || r.label || '').replace(/\s*\([A-Z]{2}\)$/, '').trim();
+  const abk = String(a.kanton || a.ak || '').toUpperCase();
+  return name ? { name, kanton: KANTON_ABK[abk] || '' } : null;
+}
+
+async function nimmStandort() {
+  gpsStatus = { typ: 'laeuft', text: 'Standort wird ermittelt …' };
+  zeichne();
+  try {
+    const pos = await standortHolen();
+    const ort = await gemeindeAus(pos.coords.latitude, pos.coords.longitude);
+    if (!ort) { gpsStatus = { typ: 'fehler', text: 'Kein Schweizer Ort gefunden. Gib den Ort von Hand ein.' }; zeichne(); return; }
+    const neu = [];
+    const dazu = (name, naehe) => {
+      if (!name || entwurf.orte.length >= 5) return;
+      const da = entwurf.orte.find((o) => gleich(o.name, name));
+      if (da) { da.naehe = naehe === 'nah' ? 'nah' : da.naehe; return; }
+      entwurf.orte.push({ name, naehe });
+      neu.push(name);
+    };
+    dazu(ort.name, 'nah');
+    if (ort.kanton && !gleich(ort.kanton, ort.name)) dazu(ort.kanton, 'mittel');
+    gpsStatus = { typ: 'ok', text: neu.length ? `Hinzugefügt: ${neu.join(' und ')}` : `${ort.name} ist schon in deiner Liste.` };
+  } catch (e) {
+    const verweigert = e && e.code === 1;
+    gpsStatus = { typ: 'fehler', text: verweigert
+      ? 'Standortzugriff nicht erlaubt. Du kannst ihn in den Browser-Einstellungen freigeben oder den Ort von Hand eingeben.'
+      : 'Standort konnte nicht ermittelt werden. Gib den Ort von Hand ein.' };
+  }
+  zeichne();
+}
+
 // Liefert { liste: [{ name, info }], offline: bool }
 async function sucheOrte(text) {
   const q = text.trim().toLowerCase();
@@ -938,6 +1002,18 @@ function ortFeld(id, onAdd, deaktiviert) {
 function schritt3(box) {
   titelZeile(box, 'Wo und wie viel');
   box.append(el('p', 'hinweis', 'Bis zu 5 Orte. Wertung: nah = beste Wertung, weit = kleine Wertung.'));
+
+  // GPS: eigener Standort mit einem Tipp
+  const gps = knopf('', 'btn btn-zweit gps-btn', nimmStandort);
+  gps.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>';
+  gps.append(gpsStatus && gpsStatus.typ === 'laeuft' ? 'Standort wird ermittelt …' : 'Meinen Standort verwenden');
+  gps.disabled = (gpsStatus && gpsStatus.typ === 'laeuft') || entwurf.orte.length >= 5;
+  box.append(gps);
+  if (gpsStatus && gpsStatus.typ !== 'laeuft') {
+    const m = el('p', gpsStatus.typ === 'ok' ? 'erfolg gps-info' : 'fehler gps-info', gpsStatus.text);
+    m.setAttribute('role', 'status');
+    box.append(m);
+  }
 
   if (entwurf.orte.length) {
     const liste = el('ul', 'wortliste');

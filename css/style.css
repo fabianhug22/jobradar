@@ -500,3 +500,7 @@ textarea {
 /* Profil-Seite: Schliessen oben rechts gut sichtbar */
 .seite .schliessen { top: 16px; right: max(12px, calc(50% - 228px)); position: fixed; background: var(--flaeche); z-index: 5; }
 .ist-start .schliessen { color: #fff; background: transparent; }
+
+/* GPS-Knopf */
+.gps-btn { display: flex; align-items: center; justify-content: center; gap: 8px; margin: 16px 0 4px; }
+.gps-info { margin: 6px 0 0; font-size: 0.9rem; }

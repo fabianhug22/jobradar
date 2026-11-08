@@ -39,11 +39,25 @@ const WOERTER_MID = ['mid', 'medior'];
 // Diese Wörter dürfen auch Teil eines Wortes sein (Teamleiter, Tech-Lead)
 const WORT_TEIL = ['lead', 'leiter', 'leitung', 'director', 'direktor'];
 
+// Englische Titel (v. a. LinkedIn): Stichwort zählt auch, wenn die Übersetzung im Titel steht
+const ALIAS = {
+  grafik: ['graphic'],
+  kommunikationsdesign: ['communication design'],
+  typografie: ['typography'],
+  illustration: ['illustrator'],
+  'digitale medien': ['digital media'],
+  'art direction': ['art director'],
+  'motion design': ['motion designer'],
+  gestalter: ['designer']
+};
+const QUELLEN_NAME = { jobscout: 'JobScout24', jobsch: 'jobs.ch', jobup: 'jobup.ch', linkedin: 'LinkedIn', persoenlich: 'persoenlich.com' };
+
 /* ---------- Zustand ---------- */
 let profil = null;      // gespeichertes Profil oder null
 let jobs = [];          // zuletzt geladene Stellen
 let stand = null;       // Zeitpunkt der letzten Aktualisierung
 let offline = false;    // true, wenn Daten aus dem Cache stammen
+let live = false;       // true = echte Stellen von /api/jobs, false = Beispieldaten
 
 /* ---------- Hilfsfunktionen ---------- */
 const $ = (id) => document.getElementById(id);
@@ -115,6 +129,17 @@ function pensumText(p) {
   return p.von === p.bis ? `${p.von} %` : `${p.von}–${p.bis} %`;
 }
 
+// Stichwort oder eine seiner Übersetzungen im Titel?
+function trifftStichwort(titel, wort) {
+  return [wort, ...(ALIAS[String(wort).toLowerCase()] || [])].some((w) => enthaelt(titel, w));
+}
+
+// Datum einer Stelle als Zeitstempel (null, wenn das Portal keins nennt)
+function datumVon(job) {
+  const t = job.datum ? new Date(job.datum).getTime() : NaN;
+  return isNaN(t) ? null : t;
+}
+
 /* ---------- Trefferquote ---------- */
 
 // Berechnet die Trefferquote einer Stelle (0–100) für ein Profil.
@@ -130,14 +155,16 @@ function matchScore(job, p) {
   if (verboten) return { ausgeblendet: true, grund: verboten, punkte: 0, gruende: [] };
   // Stelle ohne Pensum-Angabe, aber Schalter steht auf «nein»
   if (!pensum && !p.ohnePensum) return { ausgeblendet: true, grund: 'Pensum fehlt', punkte: 0, gruende: [] };
+  // Echte Portale liefern auch fachfremde Treffer: ohne eigenes Stichwort im Titel ausblenden
+  const treffer = p.stichwoerter.filter((k) => trifftStichwort(titel, k.wort));
+  if (live && !treffer.length) return { ausgeblendet: true, grund: 'Kein Stichwort', punkte: 0, gruende: [] };
 
   let summe = 30; // Basis
   const gruende = [];
   const add = (wert, text) => { if (wert) { summe += wert; gruende.push({ wert, text }); } };
 
   // 1. Stichwörter im Titel: bester Treffer volle Punkte, jeder weitere die Hälfte
-  p.stichwoerter
-    .filter((k) => enthaelt(titel, k.wort))
+  treffer
     .map((k) => ({ wort: k.wort, punkte: GEWICHTE[k.gewicht] }))
     .sort((a, b) => b.punkte - a.punkte)
     .forEach((t, i) => add(i === 0 ? t.punkte : Math.round(t.punkte / 2), t.wort));
@@ -169,13 +196,21 @@ function matchScore(job, p) {
   }
 
   // 5. Ort: beste Wertung unter allen passenden Orten (nah 20, mittel 12, weit 5)
-  const orte = p.orte.filter((o) => enthaelt(job.ort || '', o.name)).sort((a, b) => NAEHE[b.naehe] - NAEHE[a.naehe]);
+  //    Zählt auch, wenn das Portal die Stelle bei der Suche nach diesem Ort gefunden hat
+  //    (z. B. Weinfelden bei der Suche «Frauenfeld»).
+  const suchOrte = Array.isArray(job.suchOrte) ? job.suchOrte : [];
+  const orte = p.orte
+    .filter((o) => enthaelt(job.ort || '', o.name) || suchOrte.some((s) => gleich(s, o.name)))
+    .sort((a, b) => NAEHE[b.naehe] - NAEHE[a.naehe]);
   if (orte.length) add(NAEHE[orte[0].naehe], orte[0].name);
 
-  // 6. Frische: bis 7 Tage +10, bis 21 Tage +5
-  const tage = (Date.now() - new Date(job.datum).getTime()) / 86400000;
-  if (tage <= 7) add(10, 'Frisch');
-  else if (tage <= 21) add(5, 'Frisch');
+  // 6. Frische: bis 7 Tage +10, bis 21 Tage +5 (ohne Datum: 0)
+  const datum = datumVon(job);
+  if (datum !== null) {
+    const tage = (Date.now() - datum) / 86400000;
+    if (tage <= 7) add(10, 'Frisch');
+    else if (tage <= 21) add(5, 'Frisch');
+  }
 
   // Auf 0–100 begrenzen
   return { ausgeblendet: false, punkte: Math.max(0, Math.min(100, Math.round(summe))), gruende };
@@ -235,24 +270,24 @@ async function ladeJobs() {
   // Skeleton nur zeigen, wenn noch nichts angezeigt wird
   if (!jobs.length && profil) zeigeSkeleton();
   try {
-    const res = await fetch('data/jobs.json', { cache: 'no-store' });
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    const daten = await res.json();
-
-    // Demo-Daten: Datum so verschieben, dass die neuste Stelle ca. 1 h alt ist
-    const neuste = Math.max(...daten.map((j) => new Date(j.datum).getTime()));
-    const verschiebung = Date.now() - 60 * 60 * 1000 - neuste;
-    jobs = daten.map((j) => ({ ...j, datum: new Date(new Date(j.datum).getTime() + verschiebung).toISOString() }));
-
+    const echt = profil ? await ladeLive() : null;
+    if (echt) {
+      jobs = echt;
+      live = true;
+    } else {
+      jobs = await ladeDemo();
+      live = false;
+    }
     stand = Date.now();
     offline = false;
-    schreiben(KEY_CACHE, { stand, jobs });
+    schreiben(KEY_CACHE, { stand, jobs, live });
   } catch (e) {
     // Keine Verbindung: zuletzt geladene Stellen aus localStorage
     const cache = lesen(KEY_CACHE);
     if (cache && Array.isArray(cache.jobs)) {
       jobs = cache.jobs;
       stand = cache.stand;
+      live = !!cache.live;
     } else {
       jobs = [];
       stand = null;
@@ -260,6 +295,38 @@ async function ladeJobs() {
     offline = true;
   }
   zeigeListe();
+}
+
+// Echte Stellen von der Vercel-Funktion /api/jobs.
+// Suchbegriffe = Stichwörter (stärkste zuerst), Orte = Orte aus dem Profil.
+// Pro Aufruf höchstens ~10 Kombinationen aus Begriff × Ort (× 4 Portale).
+// Rückgabe null, wenn es die Funktion nicht gibt (lokal mit python-Server) → Beispieldaten.
+async function ladeLive() {
+  const rang = { stark: 0, mittel: 1, leicht: 2 };
+  const orte = [...profil.orte].sort((a, b) => NAEHE[b.naehe] - NAEHE[a.naehe]).map((o) => o.name);
+  const anzahl = Math.min(5, Math.max(1, Math.floor(10 / orte.length)));
+  const begriffe = [...profil.stichwoerter].sort((a, b) => rang[a.gewicht] - rang[b.gewicht])
+    .slice(0, anzahl).map((k) => k.wort);
+  const url = `api/jobs?terms=${encodeURIComponent(begriffe.join(','))}&places=${encodeURIComponent(orte.join(','))}`;
+
+  let res;
+  try { res = await fetch(url); } catch (e) { throw e; } // offline → Cache
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  const daten = await res.json();
+  if (!daten || !Array.isArray(daten.jobs)) throw new Error('Ungültige Antwort');
+  return daten.jobs;
+}
+
+// Beispieldaten aus data/jobs.json (für die lokale Entwicklung)
+async function ladeDemo() {
+  const res = await fetch('data/jobs.json', { cache: 'no-store' });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  const daten = await res.json();
+  // Datum so verschieben, dass die neuste Stelle ca. 1 h alt ist
+  const neuste = Math.max(...daten.map((j) => new Date(j.datum).getTime()));
+  const verschiebung = Date.now() - 60 * 60 * 1000 - neuste;
+  return daten.map((j) => ({ ...j, datum: new Date(new Date(j.datum).getTime() + verschiebung).toISOString() }));
 }
 
 /* ---------- Anzeige ---------- */
@@ -270,7 +337,7 @@ function zeigeSkeleton() {
 }
 
 function zeigeKopf() {
-  $('stand').textContent = stand ? `Zuletzt aktualisiert: ${uhrzeit(stand)}` : '';
+  $('stand').textContent = stand ? `Zuletzt aktualisiert: ${uhrzeit(stand)}${live ? '' : ' · Beispieldaten'}` : '';
   const banner = $('offline');
   if (offline && stand) {
     banner.textContent = `Offline – Stand: ${uhrzeit(stand)}`;
@@ -293,7 +360,7 @@ function zeigeListe() {
   const treffer = jobs
     .map((j) => ({ job: j, score: matchScore(j, profil) }))
     .filter((t) => !t.score.ausgeblendet)
-    .sort((a, b) => b.score.punkte - a.score.punkte || new Date(b.job.datum) - new Date(a.job.datum));
+    .sort((a, b) => b.score.punkte - a.score.punkte || (datumVon(b.job) || 0) - (datumVon(a.job) || 0));
 
   if (!treffer.length) {
     const box = el('div', 'leer');
@@ -311,7 +378,7 @@ function zeigeListe() {
 
 function karte(job, score) {
   const quote = score.punkte;
-  const jung = Date.now() - new Date(job.datum).getTime() < NEU_MS;
+  const jung = datumVon(job) !== null && Date.now() - datumVon(job) < NEU_MS;
   const k = el('button', `karte ${klasseFuer(quote)}`);
   k.type = 'button';
   k.setAttribute('aria-label', `${job.titel}, ${job.firma}, Trefferquote ${quote} Prozent. Steckbrief öffnen`);
@@ -320,7 +387,7 @@ function karte(job, score) {
   const titel = el('div', 'karte-titel', job.titel);
   if (quote >= TOP_AB) titel.append(el('span', 'badge-top', 'Top'));
   if (jung) titel.append(el('span', 'badge-neu', 'Neu'));
-  text.append(titel, el('div', 'karte-meta', `${job.firma} · ${job.ort} · ${pensumText(pensumVon(job))}`));
+  text.append(titel, el('div', 'karte-meta', [job.firma, job.ort, pensumText(pensumVon(job))].filter(Boolean).join(' · ')));
 
   const q = el('div', 'quote', String(quote));
   q.append(el('small', '', ' %'));
@@ -344,8 +411,13 @@ function oeffneSteckbrief(job, score) {
     ['Firma', job.firma],
     ['Ort', job.ort],
     ['Pensum', pensumText(pensumVon(job))],
-    ['Veröffentlicht', new Date(job.datum).toLocaleDateString('de-CH', { day: 'numeric', month: 'long', year: 'numeric' })]
+    ['Veröffentlicht', datumVon(job) !== null
+      ? new Date(datumVon(job)).toLocaleDateString('de-CH', { day: 'numeric', month: 'long', year: 'numeric' })
+      : 'unbekannt']
   ];
+  if (Array.isArray(job.quellen) && job.quellen.length) {
+    zeilen.push(['Gefunden auf', job.quellen.map((q) => QUELLEN_NAME[q] || q).join(', ')]);
+  }
   zeilen.forEach(([k, v]) => dl.append(el('dt', '', k), el('dd', '', v)));
 
   // Woher die Punkte kommen
@@ -586,6 +658,134 @@ function schritt2(box) {
   box.append(el('p', 'hinweis', 'Höhere Stufen im Titel: senior, sr., head, lead, leiter, leitung, director, direktor, principal, chief. Einstieg: junior, einsteiger, berufseinsteiger.'));
 }
 
+/* --- Ortssuche mit Vorschlägen --- */
+// Gemeinden kommen live vom offiziellen Verzeichnis von swisstopo (geo.admin.ch),
+// Kantone stehen hier fest. So wird jeder Ort korrekt geschrieben.
+const KANTONE = [
+  'Aargau', 'Appenzell Ausserrhoden', 'Appenzell Innerrhoden', 'Basel-Landschaft', 'Basel-Stadt',
+  'Bern', 'Freiburg', 'Genf', 'Glarus', 'Graubünden', 'Jura', 'Luzern', 'Neuenburg', 'Nidwalden',
+  'Obwalden', 'Schaffhausen', 'Schwyz', 'Solothurn', 'St. Gallen', 'Tessin', 'Thurgau', 'Uri',
+  'Waadt', 'Wallis', 'Zug', 'Zürich'
+];
+const ORT_API = 'https://api3.geo.admin.ch/rest/services/api/SearchServer?type=locations&origins=gg25&limit=8&searchText=';
+
+// Liefert { liste: [{ name, info }], offline: bool }
+async function sucheOrte(text) {
+  const q = text.trim().toLowerCase();
+  const kantone = KANTONE.filter((k) => k.toLowerCase().startsWith(q)).map((k) => ({ name: k, info: 'Kanton' }));
+  let gemeinden = [];
+  let offline = false;
+  try {
+    const res = await fetch(ORT_API + encodeURIComponent(text.trim()));
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const daten = await res.json();
+    gemeinden = (daten.results || []).map((r) => {
+      // Label z. B. «<b>Frauenfeld (TG)</b>»
+      const label = String((r.attrs && r.attrs.label) || '').replace(/<[^>]+>/g, '').trim();
+      const m = label.match(/^(.*?)\s*\(([A-Z]{2})\)$/);
+      return m ? { name: m[1].trim(), info: m[2] } : { name: label, info: '' };
+    }).filter((o) => o.name);
+  } catch (e) {
+    offline = true;
+  }
+  // Gemeinden zuerst, gleiche Namen nur einmal
+  const liste = [];
+  [...gemeinden, ...kantone].forEach((o) => { if (!liste.some((x) => gleich(x.name, o.name))) liste.push(o); });
+  return { liste: liste.slice(0, 8), offline };
+}
+
+function ortFeld(id, onAdd, deaktiviert) {
+  const wrap = el('div', 'ort-feld');
+  const zeile = el('div', 'eigen');
+  const input = el('input');
+  input.type = 'text';
+  input.id = id;
+  input.placeholder = 'z. B. Frauenfeld';
+  input.maxLength = 60;
+  input.autocomplete = 'off';
+  input.disabled = !!deaktiviert;
+  input.setAttribute('role', 'combobox');
+  input.setAttribute('aria-autocomplete', 'list');
+  input.setAttribute('aria-expanded', 'false');
+  input.setAttribute('aria-controls', id + '-liste');
+  const ul = el('ul', 'vorschlaege');
+  ul.id = id + '-liste';
+  ul.setAttribute('role', 'listbox');
+  ul.hidden = true;
+  const info = el('p', 'hinweis ort-info');
+  info.setAttribute('role', 'status');
+
+  let treffer = [];      // aktuelle Vorschläge
+  let aktiv = -1;        // per Pfeiltaste markierter Vorschlag
+  let offline = false;   // Verzeichnis nicht erreichbar → freie Eingabe erlaubt
+  let laufNr = 0;        // nur die Antwort der letzten Eingabe zählt
+  let timer = null;
+
+  const schliesse = () => { ul.hidden = true; input.setAttribute('aria-expanded', 'false'); input.removeAttribute('aria-activedescendant'); aktiv = -1; };
+  const markiere = (i) => {
+    aktiv = i;
+    [...ul.children].forEach((li, n) => li.setAttribute('aria-selected', String(n === i)));
+    if (i >= 0) { input.setAttribute('aria-activedescendant', `${id}-opt-${i}`); ul.children[i].scrollIntoView({ block: 'nearest' }); }
+  };
+  const zeige = () => {
+    ul.replaceChildren(...treffer.map((o, i) => {
+      const li = el('li');
+      li.id = `${id}-opt-${i}`;
+      li.setAttribute('role', 'option');
+      li.setAttribute('aria-selected', 'false');
+      li.append(el('span', '', o.name), el('span', 'info', o.info));
+      // mousedown statt click: passiert vor dem blur des Eingabefelds
+      li.addEventListener('mousedown', (e) => { e.preventDefault(); onAdd(o.name); });
+      return li;
+    }));
+    ul.hidden = !treffer.length;
+    input.setAttribute('aria-expanded', String(!!treffer.length));
+    aktiv = -1;
+  };
+
+  input.addEventListener('input', () => {
+    info.textContent = '';
+    clearTimeout(timer);
+    const text = input.value.trim();
+    if (text.length < 2) { treffer = []; schliesse(); return; }
+    timer = setTimeout(async () => {
+      const nr = ++laufNr;
+      const r = await sucheOrte(text);
+      if (nr !== laufNr) return;
+      treffer = r.liste;
+      offline = r.offline;
+      zeige();
+      if (!treffer.length) info.textContent = offline ? '' : 'Kein Ort gefunden. Bitte Schreibweise prüfen.';
+    }, 200);
+  });
+
+  // Übernehmen: markierter Vorschlag, genauer Treffer oder erster Vorschlag
+  const uebernehmen = () => {
+    const text = input.value.trim();
+    if (!text) return;
+    if (aktiv >= 0) { onAdd(treffer[aktiv].name); return; }
+    const genau = treffer.find((o) => gleich(o.name, text));
+    if (genau) { onAdd(genau.name); return; }
+    if (treffer.length) { onAdd(treffer[0].name); return; }
+    if (offline) { onAdd(text); return; } // Verzeichnis nicht erreichbar: wie eingegeben
+    info.textContent = 'Bitte wähle einen Ort aus der Liste.';
+  };
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown' && treffer.length) { e.preventDefault(); if (ul.hidden) zeige(); markiere(Math.min(aktiv + 1, treffer.length - 1)); }
+    else if (e.key === 'ArrowUp' && treffer.length) { e.preventDefault(); markiere(Math.max(aktiv - 1, 0)); }
+    else if (e.key === 'Enter') { e.preventDefault(); uebernehmen(); }
+    else if (e.key === 'Escape' && !ul.hidden) { e.preventDefault(); e.stopPropagation(); schliesse(); }
+  });
+  input.addEventListener('blur', () => setTimeout(schliesse, 100));
+
+  const b = knopf('Hinzufügen', 'btn btn-zweit', uebernehmen);
+  b.disabled = !!deaktiviert;
+  zeile.append(input, b);
+  wrap.append(zeile, ul, info);
+  return wrap;
+}
+
 /* --- Schritt 3: Wo und wie viel --- */
 function schritt3(box) {
   titelZeile(box, 'Wo und wie viel');
@@ -607,7 +807,7 @@ function schritt3(box) {
   const voll = entwurf.orte.length >= 5;
   const lab = el('label', 'feld', voll ? 'Maximal 5 Orte' : `Ort hinzufügen (${entwurf.orte.length}/5)`);
   lab.setAttribute('for', 'pf-ort');
-  box.append(lab, eigenesFeld('pf-ort', 'z. B. Frauenfeld', (w) => {
+  box.append(lab, ortFeld('pf-ort', (w) => {
     if (!entwurf.orte.some((o) => gleich(o.name, w))) entwurf.orte.push({ name: w, naehe: entwurf.orte.length ? 'mittel' : 'nah' });
     zeichne('pf-ort');
   }, voll));
@@ -738,7 +938,8 @@ function speichereProfil() {
   profil = sauber;
   schreiben(KEY_PROFIL, profil);
   $('profil').close();
-  if (jobs.length) zeigeListe(); else ladeJobs();
+  jobs = [];
+  ladeJobs(); // Orte oder Stichwörter können sich geändert haben: neu suchen
 }
 
 /* --- Löschen mit Bestätigung --- */
@@ -795,7 +996,8 @@ async function importiereDatei(datei) {
   ansicht = 'zusammenfassung';
   meldung = { typ: 'ok', text: 'Profil importiert' };
   zeichne();
-  if (jobs.length) zeigeListe(); else ladeJobs();
+  jobs = [];
+  ladeJobs();
 }
 
 /* ---------- Pop-ups: Schliessen per X, Klick daneben, Escape ---------- */

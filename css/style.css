@@ -355,3 +355,37 @@ textarea {
 .zusammen-kopf { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .zusammen-kopf h3 { margin: 0; }
 .zusammen-text { white-space: pre-line; margin-top: 4px; color: var(--text-gedaempft); overflow-wrap: anywhere; }
+
+/* ---------- Ortssuche mit Vorschlägen ---------- */
+.ort-feld { position: relative; }
+.vorschlaege {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 48px;
+  z-index: 5;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  background: var(--flaeche);
+  border: 1px solid #9ca3af;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  max-height: 264px;
+  overflow-y: auto;
+}
+.vorschlaege li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 44px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.vorschlaege li:hover,
+.vorschlaege li[aria-selected="true"] { background: var(--akzent-hell); }
+.vorschlaege .info { color: var(--text-gedaempft); font-size: 0.85rem; }
+.ort-info:empty { display: none; }
+.ort-info { margin-top: 6px; color: var(--fehler); }

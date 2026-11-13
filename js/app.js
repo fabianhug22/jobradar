@@ -4,7 +4,10 @@
 const KEY_PROFIL = 'jobradar.profil';
 const KEY_CACHE = 'jobradar.cache';
 const KEY_AUSGEBLENDET = 'jobradar.ausgeblendet'; // Stellen, die mit «Passt nicht» weggeklickt wurden
-const PASST_AB = 60;                 // ab dieser Quote oben in der Liste, darunter eingeklappt
+const PASST_AB = 60;
+const KEY_DETAILS = 'jobradar.details';   // ausgewertete Ausschreibungstexte, pro Link
+const DETAIL_MAX = 25;                     // so viele Stellen pro Laden nachprüfen
+const DETAIL_TAGE = 3;                     // so lange gilt eine Auswertung                 // ab dieser Quote oben in der Liste, darunter eingeklappt
 const PROFIL_VERSION = 1;
 const INTERVALL_MS = 60 * 60 * 1000; // 60 Minuten
 const NEU_MS = 24 * 60 * 60 * 1000;  // 24 Stunden
@@ -93,6 +96,7 @@ let stand = null;       // Zeitpunkt der letzten Aktualisierung
 let offline = false;    // true, wenn Daten aus dem Cache stammen
 let live = false;       // true = echte Stellen von /api/jobs, false = Beispieldaten
 let ausgeblendet = [];  // Schlüssel der weggeklickten Stellen
+let details = {};       // Link → { d: Auswertung, t: Zeitpunkt }
 
 /* ---------- Hilfsfunktionen ---------- */
 const $ = (id) => document.getElementById(id);
@@ -155,8 +159,16 @@ function parsePensum(text) {
 }
 
 // Pensum einer Stelle: zuerst das Pensum-Feld, sonst der Titel («Webdesigner 70–90%»)
+// Pensum einer Stelle: Pensum-Feld, Titel, sonst der Ausschreibungstext
 function pensumVon(job) {
-  return parsePensum(job.pensum) || parsePensum(job.titel);
+  const d = detailVon(job);
+  return parsePensum(job.pensum) || parsePensum(job.titel) || (d ? parsePensum(d.pensum) : null);
+}
+
+// Ausgewerteter Ausschreibungstext (oder null, wenn noch nicht geprüft)
+function detailVon(job) {
+  const e = job && job.link && details[job.link];
+  return e && e.d && e.d.ok ? e.d : null;
 }
 
 function pensumText(p) {
@@ -252,6 +264,15 @@ function matchScore(job, p) {
   } else { // senior
     if (istSenior || istLead) add(10, 'Senior');
     if (istJunior) add(-10, 'Junior');
+  }
+
+  // 2a. Ausschreibungstext: verlangte Erfahrung (nur wenn der Titel nichts dazu sagt)
+  const d = detailVon(job);
+  const tiefeStufe = ['quereinstieg', 'einsteiger', 'junior'].includes(p.erfahrung);
+  if (d && tiefeStufe && d.senior && !istSenior && !istLead) {
+    add(p.erfahrung === 'junior' ? -25 : -35, d.jahre ? `verlangt ${d.jahre}+ Jahre Erfahrung` : 'verlangt Senior-Erfahrung');
+  } else if (d && tiefeStufe && d.einstieg && !d.senior && !istEinstieg) {
+    add(10, 'offen für Einstieg');
   }
 
   // 2b. Bisheriger Beruf: Branche in Titel oder Firma → +10
@@ -368,6 +389,7 @@ async function ladeJobs() {
     offline = true;
   }
   zeigeListe();
+  verfeinere(); // Ausschreibungstexte der obersten Stellen nachprüfen
 }
 
 // Echte Stellen von der Vercel-Funktion /api/jobs.
@@ -389,6 +411,46 @@ async function ladeLive() {
   const daten = await res.json();
   if (!daten || !Array.isArray(daten.jobs)) throw new Error('Ungültige Antwort');
   return daten.jobs;
+}
+
+/* ---------- Ausschreibungstexte nachprüfen ---------- */
+// Lädt für die obersten Stellen den Text der Ausschreibung (über /api/detail)
+// und sortiert danach neu: falsches Pensum fällt raus, Senior-Anforderungen nach unten.
+let pruefLaeuft = false;
+async function verfeinere() {
+  if (!live || !profil || pruefLaeuft) return;
+  const offen = jobs
+    .filter((j) => j.link && !details[j.link] && !ausgeblendet.includes(jobKey(j)))
+    .filter((j) => !matchScore(j, profil).ausgeblendet)
+    .sort((a, b) => (datumVon(b) || 0) - (datumVon(a) || 0))
+    .slice(0, DETAIL_MAX);
+  if (!offen.length) return;
+
+  pruefLaeuft = true;
+  let timer = null;
+  const neuZeichnen = () => { clearTimeout(timer); timer = setTimeout(zeigeListe, 300); };
+  let i = 0;
+  await Promise.all(Array.from({ length: 4 }, async () => {
+    while (i < offen.length) {
+      const job = offen[i++];
+      try {
+        const res = await fetch('api/detail?url=' + encodeURIComponent(job.link));
+        if (!res.ok) continue;
+        details[job.link] = { d: await res.json(), t: Date.now() };
+        neuZeichnen();
+      } catch (e) { /* offline: später nochmals */ }
+    }
+  }));
+  pruefLaeuft = false;
+  speichereDetails();
+}
+
+function speichereDetails() {
+  const grenze = Date.now() - DETAIL_TAGE * 86400000;
+  const eintraege = Object.entries(details).filter(([, e]) => e && e.t > grenze)
+    .sort((a, b) => b[1].t - a[1].t).slice(0, 400);
+  details = Object.fromEntries(eintraege);
+  schreiben(KEY_DETAILS, details);
 }
 
 // Beispieldaten aus data/jobs.json (für die lokale Entwicklung)
@@ -493,6 +555,8 @@ function begruendung(job, score) {
   const plus = score.gruende.filter((g) => g.wert > 0 && g.text !== 'Frisch')
     .map((g) => (g.text.startsWith('Pensum') ? pensumText(pensumVon(job)) : g.text));
   const minus = score.gruende.filter((g) => g.wert < 0).map((g) => g.text);
+  const d = detailVon(job);
+  if (d && d.befristet) minus.push('befristet');
   return { plus: plus.slice(0, 3), minus: minus.slice(0, 2) };
 }
 
@@ -544,6 +608,17 @@ function oeffneSteckbrief(job, score) {
   ];
   if (Array.isArray(job.quellen) && job.quellen.length) {
     zeilen.push(['Gefunden auf', job.quellen.map((q) => QUELLEN_NAME[q] || q).join(', ')]);
+  }
+  const d = detailVon(job);
+  if (d) {
+    const infos = [];
+    if (d.senior) infos.push(d.jahre ? `verlangt ${d.jahre}+ Jahre Erfahrung` : 'verlangt viel Erfahrung');
+    else if (d.jahre) infos.push(`${d.jahre} Jahre Erfahrung erwünscht`);
+    if (d.einstieg && !d.senior) infos.push('offen für Einstieg');
+    if (d.befristet) infos.push('befristet / Projekt');
+    zeilen.push(['Ausschreibung', infos.length ? infos.join(' · ') : 'geprüft, keine Besonderheiten']);
+  } else if (live && job.link) {
+    zeilen.push(['Ausschreibung', 'noch nicht geprüft']);
   }
   zeilen.forEach(([k, v]) => dl.append(el('dt', '', k), el('dd', '', v)));
 
@@ -1465,6 +1540,8 @@ function init() {
   profil = profilBereinigen(lesen(KEY_PROFIL));
   const weg = lesen(KEY_AUSGEBLENDET);
   ausgeblendet = Array.isArray(weg) ? weg.filter((k) => typeof k === 'string') : [];
+  const det = lesen(KEY_DETAILS);
+  details = det && typeof det === 'object' && !Array.isArray(det) ? det : {};
   if (!profil) oeffneProfil(); // Kein (gültiges) Profil: Onboarding
 
   ladeJobs();

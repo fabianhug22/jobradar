@@ -1,5 +1,5 @@
 // Service Worker: legt alle App-Dateien für den Offline-Betrieb in den Cache
-const CACHE = 'jobradar-v10';
+const CACHE = 'jobradar-v12';
 const DATEIEN = [
   './',
   './index.html',

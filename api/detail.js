@@ -61,6 +61,22 @@ function beschreibung(html, istLinkedIn) {
   return decode(main ? main[0] : html).slice(0, 20000);
 }
 
+/* ---------- Verlangter Abschluss ---------- */
+// Stufen: Lehre (1) < HF (2) < FH (3) < Uni/ETH (4). Ergebnis ist die tiefste genannte Stufe,
+// denn «Lehre oder FH» heisst: eine Lehre reicht.
+const ABSCHLUSS_MUSTER = [
+  ['efz', /(?<![\p{L}])(efz|lehre|berufslehre|grundbildung|fähigkeitszeugnis|berufsausbildung)(?![\p{L}])/u],
+  ['hf', /(?<![\p{L}])(hf|höhere[nr]? fachschule)(?![\p{L}])/u],
+  ['fh', /(?<![\p{L}])(fh|fachhochschul\w*|bachelor\w*|bsc|hochschulabschluss|hochschulstudium|abgeschlossene[sn]? studium)(?![\p{L}])/u],
+  ['uni', /(?<![\p{L}])(uni|universität\w*|universitär\w*|eth|epfl|msc|masterabschluss|master-abschluss|master of|master in|master degree)(?![\p{L}])/u]
+];
+function mindestAbschluss(text) {
+  const t = String(text || '').toLowerCase();
+  const treffer = ABSCHLUSS_MUSTER.find(([, re]) => re.test(t));
+  if (!treffer) return { abschluss: null, vergleichbar: false };
+  return { abschluss: treffer[0], vergleichbar: /vergleichbar|gleichwertig|oder ähnlich|o\.\s?ä\.|entsprechende ausbildung/.test(t) };
+}
+
 /* ---------- Text auswerten ---------- */
 // Exportiert für Tests
 function analysiere(text) {
@@ -88,7 +104,8 @@ function analysiere(text) {
   const einstieg = /berufseinsteiger|quereinsteiger|quereinstieg|erste (?:berufs)?erfahrung|keine erfahrung|ohne erfahrung|studierende|studenten|praktikum|junior|einstiegsstelle|entry[- ]level|graduate/.test(klein);
   const befristet = /projektdauer|befristet|temporär|temporary|freelance|freiberuf|mandat(?:sdauer)?\b/.test(klein);
 
-  return { pensum, jahre, senior, einstieg, befristet };
+  const { abschluss, vergleichbar } = mindestAbschluss(t);
+  return { pensum, jahre, senior, einstieg, befristet, abschluss, vergleichbar };
 }
 
 module.exports = async (req, res) => {
@@ -116,4 +133,4 @@ module.exports = async (req, res) => {
   res.status(200).json(ergebnis);
 };
 
-module.exports.intern = { analysiere, beschreibung };
+module.exports.intern = { analysiere, beschreibung, mindestAbschluss };

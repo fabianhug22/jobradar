@@ -525,3 +525,69 @@ textarea {
 .cv-karte .cv { margin-top: 12px; }
 .cv-karte .wort-zeile { flex-wrap: nowrap; }
 .mini-icon { width: 44px; min-height: 40px; padding: 0; font-size: 1rem; flex: none; }
+
+/* ---------- Geführtes Onboarding (Chat) ---------- */
+.ist-chat .dialog-inhalt { padding-bottom: 0; }
+.ist-chat #pf-inhalt { min-height: calc(100vh - 28px); }
+.chat-kopf { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.seite .chat-kopf h2 { font-size: 1.15rem; margin: 0; }
+.chat-wechsel { margin: 0; padding: 8px 0; font-size: 0.9rem; }
+
+.chat-verlauf { flex: 1; display: flex; flex-direction: column; gap: 8px; padding: 12px 0 16px; }
+.blase {
+  max-width: 85%;
+  padding: 10px 14px;
+  border-radius: 18px;
+  line-height: 1.45;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+.blase-bot { align-self: flex-start; background: var(--akzent-hell); color: var(--text); border-bottom-left-radius: 6px; }
+.blase-ich { align-self: flex-end; background: var(--akzent); color: #fff; border-bottom-right-radius: 6px; }
+.blase.neu { animation: blase-rein 0.25s ease-out; }
+.blase-bot.neu { transform-origin: bottom left; }
+.blase-ich.neu { transform-origin: bottom right; }
+@keyframes blase-rein { from { opacity: 0; transform: translateY(6px) scale(0.96); } to { opacity: 1; transform: none; } }
+
+.tippt { display: flex; gap: 4px; padding: 14px 16px; }
+.tippt span { width: 7px; height: 7px; border-radius: 50%; background: var(--akzent); opacity: 0.4; animation: tippt 1s infinite; }
+.tippt span:nth-child(2) { animation-delay: 0.15s; }
+.tippt span:nth-child(3) { animation-delay: 0.3s; }
+@keyframes tippt { 0%, 60%, 100% { opacity: 0.3; transform: none; } 30% { opacity: 1; transform: translateY(-3px); } }
+
+.chat-optionen { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; padding-bottom: 12px; }
+.chat-optionen .chip { background: var(--flaeche); }
+.chat-optionen .chip[aria-pressed="true"] { background: var(--akzent); color: #fff; }
+.chat-optionen .chip-extra { border-style: dashed; border-color: var(--akzent); color: var(--akzent); font-weight: 600; }
+.chat-ende { flex-direction: column; align-items: stretch; }
+
+.chat-eingabezeile {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  gap: 8px;
+  margin: 0 -20px;
+  padding: 12px 20px calc(12px + env(safe-area-inset-bottom));
+  background: var(--flaeche);
+  border-top: 1px solid var(--linie);
+  z-index: 4;
+}
+.chat-eingabezeile input { flex: 1; min-width: 0; border-radius: 99px; padding-left: 16px; }
+.chat-mic, .chat-senden {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  border: 0;
+  border-radius: 50%;
+  cursor: pointer;
+}
+.chat-mic { background: var(--akzent-hell); color: var(--akzent); }
+.chat-mic.aktiv { background: var(--fehler); color: #fff; animation: mic 1.2s infinite; }
+@keyframes mic { 0%, 100% { box-shadow: 0 0 0 0 rgba(185, 28, 28, 0.4); } 50% { box-shadow: 0 0 0 8px rgba(185, 28, 28, 0); } }
+.chat-senden { background: var(--akzent); color: #fff; }
+.chat-mic:disabled, .chat-senden:disabled { opacity: 0.4; cursor: default; }
+
+.start-aktionen .btn-zweit { min-height: 52px; }
+@media (prefers-reduced-motion: reduce) { .blase.neu, .tippt span, .chat-mic.aktiv { animation: none; } }

@@ -53,6 +53,31 @@ const WOERTER_SENIOR = ['senior', 'sr.'];
 const WOERTER_LEAD = ['head', 'lead', 'leiter', 'leitung', 'director', 'direktor', 'principal', 'chief'];
 const WOERTER_JUNIOR = ['junior', 'einsteiger', 'berufseinsteiger'];
 const WOERTER_MID = ['mid', 'medior'];
+// Abschlüsse: Stufe 1–4 (Kurse zählen nicht als Stufe)
+const ABSCHLUESSE = {
+  efz: ['Lehre (EFZ)', 1, 'Lehre'],
+  hf: ['Höhere Fachschule (HF)', 2, 'HF'],
+  fh: ['Fachhochschule / Bachelor', 3, 'FH'],
+  uni: ['Uni / ETH / Master', 4, 'Uni/ETH'],
+  kurs: ['Kurse / Zertifikate', 0, 'Kurs']
+};
+// Gleiche Erkennung wie in api/detail.js (für Titel wie «… (Uni/FH/ETH)»)
+const ABSCHLUSS_MUSTER = [
+  ['efz', /(?<![\p{L}])(efz|lehre|berufslehre|grundbildung|fähigkeitszeugnis)(?![\p{L}])/u],
+  ['hf', /(?<![\p{L}])(hf|höhere[nr]? fachschule)(?![\p{L}])/u],
+  ['fh', /(?<![\p{L}])(fh|fachhochschul\w*|bachelor\w*|bsc|hochschulabschluss)(?![\p{L}])/u],
+  ['uni', /(?<![\p{L}])(uni|universität\w*|eth|epfl|msc|masterabschluss|master-abschluss|master of|master in|master degree)(?![\p{L}])/u]
+];
+function abschlussImText(text) {
+  const t = String(text || '').toLowerCase();
+  const treffer = ABSCHLUSS_MUSTER.find(([, re]) => re.test(t));
+  return treffer ? treffer[0] : null;
+}
+// Höchste Stufe der Person (0 = nichts angegeben → keine Prüfung)
+function eigeneStufe(p) {
+  return Math.max(0, ...(p.abschluesse || []).map((k) => (ABSCHLUESSE[k] ? ABSCHLUESSE[k][1] : 0)));
+}
+
 // Stellen, die für Quereinsteiger:innen offen sind
 const WOERTER_EINSTIEG = [
   'praktikum', 'praktikant', 'praktikantin', 'intern', 'internship', 'trainee', 'werkstudent',
@@ -181,6 +206,32 @@ function trifftStichwort(titel, wort) {
   return [wort, ...(ALIAS[String(wort).toLowerCase()] || [])].some((w) => enthaelt(titel, w));
 }
 
+// Alltagswörter → Stichwort (für Chat, Sprache und CV)
+const UMSCHREIBUNGEN = {
+  Grafik: ['grafisch', 'grafiker', 'graphic'],
+  Gestalter: ['gestalte', 'gestaltung', 'gestalterin'],
+  Layout: ['flyer', 'broschüre', 'plakat', 'inserat', 'printprodukt'],
+  Typografie: ['schrift', 'typo'],
+  Branding: ['marke', 'logo', 'corporate design', 'erscheinungsbild'],
+  'Content Creator': ['content', 'inhalte', 'reels', 'videos'],
+  'Social Media': ['instagram', 'tiktok', 'linkedin post', 'social'],
+  Webdesign: ['website', 'webseite', 'homepage', 'webflow', 'wordpress'],
+  UX: ['user experience', 'nutzererlebnis', 'usability', 'nutzerforschung', 'figma'],
+  UI: ['user interface', 'benutzeroberfläche', 'interface', 'apps gestalten'],
+  'Interaction Design': ['interaktion', 'interaction'],
+  Illustration: ['illustrier', 'zeichne', 'zeichnen'],
+  'Motion Design': ['animation', 'animiere', 'after effects'],
+  'Art Direction': ['art director', 'kreativleitung'],
+  Mediamatik: ['mediamatiker'],
+  Werbetechnik: ['beschriftung', 'werbetechniker'],
+  '3D': ['blender', 'cinema 4d']
+};
+function stichwoerterAusText(text) {
+  const t = ' ' + String(text || '').toLowerCase().replace(/[-–_/]/g, ' ') + ' ';
+  return VORSCHLAEGE_STICHWORT.filter((w) => trifftStichwort(t, w)
+    || (UMSCHREIBUNGEN[w] || []).some((u) => t.includes(u)));
+}
+
 // Datum einer Stelle als Zeitstempel (null, wenn das Portal keins nennt)
 function datumVon(job) {
   const t = job.datum ? new Date(job.datum).getTime() : NaN;
@@ -266,6 +317,14 @@ function matchScore(job, p) {
     if (istJunior) add(-10, 'Junior');
   }
 
+  // 2c. Abschluss: Verlangt die Stelle mehr, als die Person hat?
+  //     Steht es im Titel («Uni/FH/ETH»), wird die Stelle ausgeblendet; steht es nur im Text, gibt es Abzug.
+  const stufe = eigeneStufe(p);
+  if (stufe > 0) {
+    const imTitel = abschlussImText(titel);
+    if (imTitel && ABSCHLUESSE[imTitel][1] > stufe) return { ausgeblendet: true, grund: 'Abschluss', punkte: 0, gruende: [] };
+  }
+
   // 2a. Ausschreibungstext: verlangte Erfahrung (nur wenn der Titel nichts dazu sagt)
   const d = detailVon(job);
   const tiefeStufe = ['quereinstieg', 'einsteiger', 'junior'].includes(p.erfahrung);
@@ -273,6 +332,10 @@ function matchScore(job, p) {
     add(p.erfahrung === 'junior' ? -25 : -35, d.jahre ? `verlangt ${d.jahre}+ Jahre Erfahrung` : 'verlangt Senior-Erfahrung');
   } else if (d && tiefeStufe && d.einstieg && !d.senior && !istEinstieg) {
     add(10, 'offen für Einstieg');
+  }
+
+  if (d && stufe > 0 && d.abschluss && ABSCHLUESSE[d.abschluss] && ABSCHLUESSE[d.abschluss][1] > stufe) {
+    add(d.vergleichbar ? -15 : -35, `verlangt ${ABSCHLUESSE[d.abschluss][2]}`);
   }
 
   // 2b. Bisheriger Beruf: Branche in Titel oder Firma → +10
@@ -348,14 +411,16 @@ function profilBereinigen(p) {
     stichwoerter, erfahrung: p.erfahrung, orte,
     pensumVon: von, pensumBis: bis, ohnePensum: p.ohnePensum,
     ausschluss: wortliste(p.ausschluss), abwertend: wortliste(p.abwertend),
-    hintergrund: wortliste(p.hintergrund).slice(0, 5) // fehlt bei älteren Profilen → leer
+    hintergrund: wortliste(p.hintergrund).slice(0, 5), // fehlt bei älteren Profilen → leer
+    name: text(p.name).slice(0, 40),
+    abschluesse: (Array.isArray(p.abschluesse) ? p.abschluesse : []).filter((k) => Object.hasOwn(ABSCHLUESSE, k))
   };
 }
 
 function leeresProfil() {
   return {
     stichwoerter: [], erfahrung: 'junior', orte: [],
-    pensumVon: 60, pensumBis: 80, ohnePensum: true, ausschluss: [], abwertend: [], hintergrund: []
+    pensumVon: 60, pensumBis: 80, ohnePensum: true, ausschluss: [], abwertend: [], hintergrund: [], abschluesse: []
   };
 }
 
@@ -616,6 +681,7 @@ function oeffneSteckbrief(job, score) {
     else if (d.jahre) infos.push(`${d.jahre} Jahre Erfahrung erwünscht`);
     if (d.einstieg && !d.senior) infos.push('offen für Einstieg');
     if (d.befristet) infos.push('befristet / Projekt');
+    if (d.abschluss && ABSCHLUESSE[d.abschluss]) infos.push(`verlangt ${ABSCHLUESSE[d.abschluss][2]}${d.vergleichbar ? ' oder vergleichbar' : ''}`);
     zeilen.push(['Ausschreibung', infos.length ? infos.join(' · ') : 'geprüft, keine Besonderheiten']);
   } else if (live && job.link) {
     zeilen.push(['Ausschreibung', 'noch nicht geprüft']);
@@ -716,7 +782,9 @@ function zeichne(fokusId) {
   $('pf-x').hidden = !profil; // Beim ersten Start kann die Seite nicht geschlossen werden
   $('profil').classList.toggle('ist-start', ansicht === 'start');
 
+  $('profil').classList.toggle('ist-chat', ansicht === 'chat');
   if (ansicht === 'start') zeichneStart(box);
+  else if (ansicht === 'chat') zeichneChat(box);
   else if (ansicht === 'zusammenfassung') zeichneZusammenfassung(box);
   else if (ansicht === 'loeschen') zeichneLoeschen(box);
   else {
@@ -766,7 +834,7 @@ function zeichneStart(box) {
 
   const vorteile = el('ul', 'start-vorteile');
   [
-    ['1', 'In 2 Minuten eingerichtet', 'Wähle ein Paket wie «Grafik & Print» und deine Orte.'],
+    ['💬', 'In 2 Minuten eingerichtet', 'Beantworte ein paar Fragen im Chat, gern auch per Sprache.'],
     ['%', 'Trefferquote mit Begründung', 'Du siehst sofort, warum eine Stelle passt.'],
     ['↑', 'Neueste Stellen zuoberst', 'Damit du dich als Erste:r bewirbst.']
   ].forEach(([icon, titel, text]) => {
@@ -783,10 +851,359 @@ function zeichneStart(box) {
   zeigeMeldung(box);
   const aktionen = el('div', 'aktionen start-aktionen');
   aktionen.append(
-    knopf('Los geht’s', 'btn btn-gross', () => gehe(1)),
+    knopf('Geführt starten', 'btn btn-gross', starteChat),
+    knopf('Selbst ausfüllen', 'btn btn-zweit', () => gehe(1)),
     knopf('Profil importieren (.json)', 'link-btn', () => $('pf-datei').click())
   );
   box.append(aktionen, el('p', 'start-fuss', 'Kein Login. Dein Profil bleibt auf diesem Gerät.'));
+}
+
+/* ---------- Geführtes Onboarding als Chat ---------- */
+// Feste Fragen als Sprechblasen. Antworten per Knopf, Tippen oder Sprechen.
+// Keine KI: Die Antworten werden mit denselben Regeln ausgewertet wie das Formular.
+let chat = null; // { verlauf: [{ von, text }], schritt, auswahl: [], tippt }
+// Nur mit Maus/Trackpad automatisch ins Eingabefeld springen (auf dem Handy würde sonst die Tastatur die Knöpfe verdecken)
+const FOKUS_CHAT = typeof matchMedia !== 'undefined' && matchMedia('(pointer: fine)').matches ? 'chat-eingabe' : undefined;
+
+const PENSUM_OPTIONEN = { '40–60 %': [40, 60], '60–80 %': [60, 80], '80–100 %': [80, 100], '100 %': [100, 100], 'Egal': [10, 100] };
+const NEIN = /^(nein|nichts|keine?|nö|weiter|fertig|passt)\b/i;
+const vorname = () => (entwurf.name ? `, ${entwurf.name}` : '');
+
+const CHAT_FRAGEN = [
+  {
+    frage: () => 'Hoi! Ich bin dein Jobradar 👋 Ich stelle dir ein paar kurze Fragen und suche danach passende Stellen für dich. Wie heisst du?',
+    platzhalter: 'Dein Vorname',
+    antwort: (text) => {
+      const name = text.replace(/^(ich bin|ich heisse|ich heiße|mein name ist|hoi|hallo|hi)[ ,]*/i, '').split(/[ ,.!]/)[0];
+      if (!name) return { ok: false, bot: 'Wie darf ich dich nennen?' };
+      entwurf.name = name.charAt(0).toUpperCase() + name.slice(1);
+      return { ok: true };
+    }
+  },
+  {
+    frage: () => `Freut mich${vorname()}! Was machst du gerne oder was möchtest du beruflich machen? Erzähl frei, z. B. «Ich gestalte Social-Media-Posts und lerne gerade UX». Oder wähle ein Paket.`,
+    optionen: () => Object.keys(PAKETE),
+    mehrfach: true,
+    extra: [{ label: '📄 CV hochladen', aktion: () => $('chat-cv').click() }],
+    platzhalter: 'Erzähl, was du machst …',
+    antwort: (text, auswahl) => {
+      const neu = [];
+      auswahl.forEach((paket) => (PAKETE[paket] || []).forEach(([w, g]) => {
+        if (!entwurf.stichwoerter.some((k) => gleich(k.wort, w))) { entwurf.stichwoerter.push({ wort: w, gewicht: g }); neu.push(w); }
+      }));
+      stichwoerterAusText(text).forEach((w) => {
+        const da = entwurf.stichwoerter.find((k) => gleich(k.wort, w));
+        if (da) da.gewicht = 'stark';
+        else { entwurf.stichwoerter.push({ wort: w, gewicht: 'stark' }); neu.push(w); }
+      });
+      if (!entwurf.stichwoerter.length) return { ok: false, bot: 'Dazu habe ich noch kein passendes Stichwort gefunden. Wähle ein Paket oder beschreib es mit anderen Worten.' };
+      return { ok: true, bot: `Notiert: ${entwurf.stichwoerter.map((k) => k.wort).join(', ')}.` };
+    }
+  },
+  {
+    frage: () => 'Wie viel Erfahrung hast du in diesem Bereich?',
+    optionen: () => Object.values(STUFEN).map(([name]) => name),
+    antwort: (text, auswahl) => {
+      const wahl = (auswahl[0] || text).toLowerCase();
+      const key = Object.keys(STUFEN).find((k) => wahl.includes(STUFEN[k][0].toLowerCase().split(' ')[0]) || wahl.includes(k))
+        || (/studi|kurs|quer|umsteig|weiterbild/.test(wahl) ? 'quereinstieg' : /keine|wenig|anfang|neu/.test(wahl) ? 'einsteiger' : null);
+      if (!key) return { ok: false, bot: 'Wähle am besten eine der Stufen.' };
+      entwurf.erfahrung = key;
+      if (key === 'quereinstieg') entwurf.ausschluss = entwurf.ausschluss.filter((w) => !/^praktik/i.test(w));
+      return { ok: true };
+    }
+  },
+  {
+    frage: () => 'Welche Ausbildung hast du, auch laufend? Du kannst mehrere wählen.',
+    optionen: () => Object.values(ABSCHLUESSE).map(([label]) => label),
+    mehrfach: true,
+    platzhalter: 'Oder tippe, z. B. «KV-Lehre und HF»',
+    antwort: (text, auswahl) => {
+      const t = ' ' + text.toLowerCase() + ' ';
+      Object.entries(ABSCHLUESSE).forEach(([k, [label]]) => {
+        const genannt = auswahl.includes(label)
+          || (k === 'efz' && /lehre|efz|kv/.test(t)) || (k === 'hf' && /\bhf\b|höhere fachschule/.test(t))
+          || (k === 'fh' && /\bfh\b|fachhochschul|bachelor/.test(t)) || (k === 'uni' && /\buni\b|universität|eth|master/.test(t))
+          || (k === 'kurs' && /kurs|zertifikat|coursera|google/.test(t));
+        if (genannt && !entwurf.abschluesse.includes(k)) entwurf.abschluesse.push(k);
+      });
+      return { ok: true, bot: entwurf.abschluesse.length ? '' : 'Alles klar, dann prüfe ich keine Abschlüsse.' };
+    }
+  },
+  {
+    frage: () => 'Hast du vorher in einer anderen Branche gearbeitet? Dort zählt dein Vorwissen doppelt.',
+    optionen: () => [...Object.keys(HINTERGRUND), 'Nein'],
+    mehrfach: true,
+    platzhalter: 'Oder tippe deine Branche',
+    antwort: (text, auswahl) => {
+      auswahl.filter((a) => a !== 'Nein').forEach((h) => { if (!entwurf.hintergrund.includes(h)) entwurf.hintergrund.push(h); });
+      if (text && !NEIN.test(text)) {
+        const bekannt = Object.keys(HINTERGRUND).find((h) => h.toLowerCase().split(/ & |, /).some((teil) => text.toLowerCase().includes(teil.slice(0, 5))));
+        const wert = bekannt || text.trim().slice(0, 40);
+        if (!entwurf.hintergrund.includes(wert)) entwurf.hintergrund.push(wert);
+      }
+      entwurf.hintergrund = entwurf.hintergrund.slice(0, 5);
+      return { ok: true };
+    }
+  },
+  {
+    frage: () => 'Wo möchtest du arbeiten? Nenn einen Ort oder nutze deinen Standort.',
+    extra: [{ label: '📍 Mein Standort', aktion: () => chatStandort() }],
+    optionen: () => (entwurf.orte.length ? ['Weiter'] : []),
+    platzhalter: 'z. B. Winterthur',
+    antwort: async (text, auswahl) => {
+      if (auswahl.includes('Weiter') || (NEIN.test(text) && entwurf.orte.length)) {
+        return entwurf.orte.length ? { ok: true } : { ok: false, bot: 'Nenn mir mindestens einen Ort.' };
+      }
+      if (!text) return { ok: false, bot: 'Nenn mir einen Ort.' };
+      const r = await sucheOrte(text);
+      const ort = r.liste.find((o) => gleich(o.name, text.trim())) || r.liste[0];
+      const name = ort ? ort.name : (r.offline ? text.trim() : null);
+      if (!name) return { ok: false, bot: `«${text}» kenne ich nicht. Prüf die Schreibweise.` };
+      if (entwurf.orte.length >= 5) return { ok: true, bot: 'Das sind schon 5 Orte, mehr geht nicht.' };
+      if (!entwurf.orte.some((o) => gleich(o.name, name))) entwurf.orte.push({ name, naehe: entwurf.orte.length ? 'mittel' : 'nah' });
+      return { ok: false, bot: `${name} notiert. Noch ein Ort? Sonst tippe auf «Weiter».` };
+    }
+  },
+  {
+    frage: () => 'Welches Pensum suchst du?',
+    optionen: () => Object.keys(PENSUM_OPTIONEN),
+    platzhalter: 'Oder z. B. «70 bis 90»',
+    antwort: (text, auswahl) => {
+      let bereich = PENSUM_OPTIONEN[auswahl[0]];
+      if (!bereich) {
+        const z = (text.match(/\d{2,3}/g) || []).map(Number).filter((n) => n >= 10 && n <= 100);
+        if (z.length) bereich = [Math.min(...z), Math.max(...z)];
+      }
+      if (!bereich) return { ok: false, bot: 'Wähle ein Pensum oder tippe Zahlen, z. B. «60 bis 80».' };
+      [entwurf.pensumVon, entwurf.pensumBis] = bereich;
+      return { ok: true };
+    }
+  },
+  {
+    frage: () => 'Letzte Frage: Gibt es etwas, das du sicher nicht willst? Solche Stellen blende ich aus.',
+    // Technik-Stellen sortiert der Server schon aus; hier nur, was Kreative oft nicht wollen
+    optionen: () => [...['Verkauf', 'Aussendienst', 'Callcenter', 'Temporär', 'Praktikum', 'Lehrstelle']
+      .filter((w) => entwurf.erfahrung !== 'quereinstieg' || !/^praktik/i.test(w)), 'Nichts'],
+    mehrfach: true,
+    platzhalter: 'Oder tippe Wörter, z. B. «Verkauf, Schichtarbeit»',
+    antwort: (text, auswahl) => {
+      const woerter = [...auswahl.filter((a) => a !== 'Nichts'),
+        ...(NEIN.test(text) ? [] : text.split(/,|\bund\b/).map((w) => w.trim()).filter((w) => w.length > 1))];
+      woerter.forEach((w) => { if (!entwurf.ausschluss.some((x) => gleich(x, w))) entwurf.ausschluss.push(w); });
+      return { ok: true };
+    }
+  }
+];
+
+function starteChat() {
+  entwurf = leeresProfil();
+  chat = { verlauf: [], schritt: 0, auswahl: [], tippt: false };
+  ansicht = 'chat';
+  meldung = null;
+  botSagt(CHAT_FRAGEN[0].frage());
+}
+
+// Bot-Nachricht mit kurzer «tippt …»-Pause, damit es sich wie ein Gespräch anfühlt
+function botSagt(text) {
+  if (!text) { zeichne(FOKUS_CHAT); return; }
+  chat.tippt = true;
+  zeichne();
+  setTimeout(() => {
+    chat.tippt = false;
+    chat.verlauf.push({ von: 'bot', text });
+    zeichne(FOKUS_CHAT);
+  }, Math.min(900, 300 + text.length * 6));
+}
+
+async function chatAntwort(text, auswahl, anzeigeText) {
+  const frage = CHAT_FRAGEN[chat.schritt];
+  if (!frage) return;
+  const anzeige = anzeigeText || [...auswahl, text].filter(Boolean).join(', ');
+  if (!anzeige) return;
+  chat.verlauf.push({ von: 'ich', text: anzeige });
+  chat.auswahl = [];
+  chat.tippt = true;
+  zeichne();
+  const r = await frage.antwort(text.trim(), auswahl);
+  chat.tippt = false;
+  if (r.bot) chat.verlauf.push({ von: 'bot', text: r.bot });
+  if (r.ok) {
+    chat.schritt += 1;
+    const naechste = CHAT_FRAGEN[chat.schritt];
+    if (naechste) botSagt(naechste.frage());
+    else botSagt(`Super${vorname()}! Das habe ich verstanden:\n\n${profilText(entwurf)}\n\nStimmt das so?`);
+  } else {
+    zeichne(FOKUS_CHAT);
+  }
+}
+
+async function chatStandort() {
+  chat.verlauf.push({ von: 'ich', text: '📍 Mein Standort' });
+  chat.tippt = true;
+  zeichne();
+  let text;
+  try {
+    const pos = await standortHolen();
+    const ort = await gemeindeAus(pos.coords.latitude, pos.coords.longitude);
+    if (!ort) text = 'Ich habe keinen Schweizer Ort gefunden. Tippe den Ort bitte ein.';
+    else {
+      [[ort.name, 'nah'], [ort.kanton, 'mittel']].forEach(([n, naehe]) => {
+        if (n && entwurf.orte.length < 5 && !entwurf.orte.some((o) => gleich(o.name, n))) entwurf.orte.push({ name: n, naehe });
+      });
+      text = `${ort.name}${ort.kanton ? ` und ${ort.kanton}` : ''} notiert. Noch ein Ort? Sonst tippe auf «Weiter».`;
+    }
+  } catch (e) {
+    text = e && e.code === 1 ? 'Ich darf deinen Standort nicht abfragen. Tippe den Ort bitte ein.' : 'Den Standort konnte ich nicht bestimmen. Tippe den Ort bitte ein.';
+  }
+  chat.tippt = false;
+  chat.verlauf.push({ von: 'bot', text });
+  zeichne(FOKUS_CHAT);
+}
+
+// Profil in Sätzen, für den Chat-Abschluss
+function profilText(p) {
+  const z = [
+    `• Stichwörter: ${p.stichwoerter.map((k) => k.wort).join(', ')}`,
+    `• Erfahrung: ${STUFEN[p.erfahrung][0]}`
+  ];
+  if (p.abschluesse.length) z.push(`• Ausbildung: ${p.abschluesse.map((k) => ABSCHLUESSE[k][0]).join(', ')}`);
+  if (p.hintergrund.length) z.push(`• Bisherige Branche: ${p.hintergrund.join(', ')}`);
+  z.push(`• Orte: ${p.orte.map((o) => o.name).join(', ')}`);
+  z.push(`• Pensum: ${pensumText({ von: p.pensumVon, bis: p.pensumBis })}`);
+  if (p.ausschluss.length) z.push(`• Ausblenden: ${p.ausschluss.join(', ')}`);
+  return z.join('\n');
+}
+
+// Spracheingabe: im Browser eingebaut (Chrome, Safari, Edge). Die Erkennung läuft über Google bzw. Apple.
+const Spracherkennung = typeof window !== 'undefined' && (window.SpeechRecognition || window.webkitSpeechRecognition);
+let hoertZu = null;
+
+function mikrofon(input, knopfEl) {
+  if (hoertZu) { hoertZu.stop(); return; }
+  const rec = new Spracherkennung();
+  rec.lang = 'de-CH';
+  rec.interimResults = true;
+  rec.continuous = false;
+  const vorher = input.value ? input.value + ' ' : '';
+  rec.onresult = (e) => {
+    input.value = vorher + [...e.results].map((r) => r[0].transcript).join('');
+  };
+  rec.onend = () => { hoertZu = null; knopfEl.classList.remove('aktiv'); knopfEl.setAttribute('aria-pressed', 'false'); input.focus(); };
+  rec.onerror = () => rec.onend();
+  hoertZu = rec;
+  knopfEl.classList.add('aktiv');
+  knopfEl.setAttribute('aria-pressed', 'true');
+  rec.start();
+}
+
+function zeichneChat(box) {
+  const kopf = el('div', 'chat-kopf');
+  const h = el('h2', '', 'Dein Profil im Gespräch');
+  h.id = 'pf-titel';
+  kopf.append(h, knopf('Selbst ausfüllen', 'link-btn chat-wechsel', () => { chat = null; gehe(1); }));
+  box.append(kopf);
+
+  // Verlauf
+  const log = el('div', 'chat-verlauf');
+  log.setAttribute('role', 'log');
+  log.setAttribute('aria-live', 'polite');
+  chat.verlauf.forEach((n, i) => {
+    const b = el('div', `blase blase-${n.von}${i === chat.verlauf.length - 1 ? ' neu' : ''}`, n.text);
+    log.append(b);
+  });
+  if (chat.tippt) {
+    const t = el('div', 'blase blase-bot tippt');
+    t.setAttribute('aria-label', 'Jobradar schreibt');
+    t.append(el('span'), el('span'), el('span'));
+    log.append(t);
+  }
+  box.append(log);
+
+  const frage = CHAT_FRAGEN[chat.schritt];
+  const fertig = !frage;
+  const wartet = chat.tippt || !chat.verlauf.length || chat.verlauf[chat.verlauf.length - 1].von !== 'bot';
+
+  // Antwort-Knöpfe
+  if (!wartet) {
+    const opt = el('div', 'chat-optionen');
+    if (fertig) {
+      opt.append(
+        knopf('Speichern & Stellen suchen', 'btn', () => { chat = null; speichereProfil(); }),
+        knopf('Im Detail anpassen', 'btn btn-zweit', () => { chat = null; gehe('zusammenfassung'); })
+      );
+      opt.classList.add('chat-ende');
+    } else {
+      (frage.extra || []).forEach((x) => opt.append(knopf(x.label, 'chip chip-extra', x.aktion)));
+      (frage.optionen ? frage.optionen() : []).forEach((o) => {
+        const c = knopf(o, 'chip', () => {
+          if (!frage.mehrfach) { chatAntwort('', [o]); return; }
+          chat.auswahl = chat.auswahl.includes(o) ? chat.auswahl.filter((x) => x !== o) : [...chat.auswahl, o];
+          zeichne();
+        });
+        c.setAttribute('aria-pressed', String(chat.auswahl.includes(o)));
+        opt.append(c);
+      });
+    }
+    if (opt.children.length) box.append(opt);
+  }
+
+  // Eingabezeile mit Mikrofon
+  if (!fertig) {
+    const form = el('form', 'chat-eingabezeile');
+    const input = el('input');
+    input.type = 'text';
+    input.id = 'chat-eingabe';
+    input.autocomplete = 'off';
+    input.placeholder = frage.platzhalter || 'Antwort tippen …';
+    input.setAttribute('aria-label', 'Deine Antwort');
+    input.disabled = wartet;
+    form.append(input);
+    if (Spracherkennung) {
+      const mic = knopf('', 'chat-mic', () => mikrofon(input, mic));
+      mic.innerHTML = '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>';
+      mic.setAttribute('aria-label', 'Antwort sprechen');
+      mic.setAttribute('aria-pressed', 'false');
+      mic.disabled = wartet;
+      form.append(mic);
+    }
+    const senden = el('button', 'chat-senden');
+    senden.type = 'submit';
+    senden.setAttribute('aria-label', 'Antwort senden');
+    senden.innerHTML = '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>';
+    senden.disabled = wartet;
+    form.append(senden);
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      if (hoertZu) hoertZu.stop();
+      chatAntwort(input.value, chat.auswahl);
+    });
+    box.append(form);
+
+    // CV im Chat: Text lesen und wie eine Antwort behandeln
+    const datei = el('input');
+    datei.type = 'file';
+    datei.id = 'chat-cv';
+    datei.className = 'unsichtbar';
+    datei.accept = '.pdf,.docx,.txt';
+    datei.addEventListener('change', async () => {
+      const f = datei.files[0];
+      datei.value = '';
+      if (!f) return;
+      let text = '';
+      try { text = await textAusDatei(f); } catch (e) { text = ''; }
+      if (text.trim().length < 30) {
+        chat.verlauf.push({ von: 'ich', text: `📄 ${f.name}` });
+        botSagt('Den CV konnte ich nicht lesen. Erzähl mir lieber kurz, was du machst.');
+        return;
+      }
+      chatAntwort(text.slice(0, 20000), chat.auswahl, `📄 ${f.name}`);
+    });
+    box.append(datei);
+  }
+
+  // Immer zur neusten Nachricht scrollen
+  requestAnimationFrame(() => { $('profil').scrollTop = $('profil').scrollHeight; });
 }
 
 /* --- Bausteine für die Schritte --- */
@@ -889,7 +1306,7 @@ async function textAusDatei(datei) {
 
 // Stichwörter aus dem CV-Text (inkl. englischer Begriffe wie «Graphic»)
 function cvAbgleichen(hat) {
-  cvVorschlaege = VORSCHLAEGE_STICHWORT.filter((w) => !hat(w) && trifftStichwort(cvText, w));
+  cvVorschlaege = stichwoerterAusText(cvText).filter((w) => !hat(w));
 }
 
 async function cvHochladen(datei, hat) {
@@ -1059,6 +1476,16 @@ function schritt2(box) {
   if (entwurf.erfahrung === 'quereinstieg') {
     box.append(el('p', 'hinweis', 'Stellen mit Praktikum, Trainee, Werkstudent:in, Quereinstieg oder Junior im Titel bekommen +20 Punkte. Senior- und Lead-Stellen fallen nach unten.'));
   }
+
+  // Ausbildung
+  box.append(el('h3', '', 'Deine Ausbildung (auch laufend)'));
+  box.append(el('p', 'hinweis', 'Verlangt eine Stelle einen höheren Abschluss, z. B. «Uni/FH/ETH», wird sie ausgeblendet oder rutscht nach unten. Ohne Angabe wird nichts geprüft.'));
+  const labelZuKey = Object.fromEntries(Object.entries(ABSCHLUESSE).map(([k, [label]]) => [label, k]));
+  box.append(chipGruppe(Object.keys(labelZuKey), (l) => entwurf.abschluesse.includes(labelZuKey[l]), (l) => {
+    const k = labelZuKey[l];
+    entwurf.abschluesse = entwurf.abschluesse.includes(k) ? entwurf.abschluesse.filter((x) => x !== k) : [...entwurf.abschluesse, k];
+    zeichne();
+  }, 'Abschlüsse'));
 
   // Bisheriger Beruf / Branche
   box.append(el('h3', '', 'Dein bisheriger Beruf (optional)'));
@@ -1407,7 +1834,9 @@ function zeichneZusammenfassung(box) {
   titelZeile(box, profil ? 'Dein Profil' : 'Zusammenfassung');
   const abschnitte = [
     ['Was du machst', entwurf.stichwoerter.map((k) => `${k.wort} (${k.gewicht})`).join(', ') || '–'],
-    ['Erfahrung', STUFEN[entwurf.erfahrung][0] + (entwurf.hintergrund && entwurf.hintergrund.length ? `\nBisherige Branche: ${entwurf.hintergrund.join(', ')}` : '')],
+    ['Erfahrung', STUFEN[entwurf.erfahrung][0]
+      + (entwurf.abschluesse && entwurf.abschluesse.length ? `\nAusbildung: ${entwurf.abschluesse.map((k) => ABSCHLUESSE[k][0]).join(', ')}` : '')
+      + (entwurf.hintergrund && entwurf.hintergrund.length ? `\nBisherige Branche: ${entwurf.hintergrund.join(', ')}` : '')],
     ['Wo und wie viel', `${entwurf.orte.map((o) => `${o.name} (${o.naehe})`).join(', ') || '–'}\nPensum ${pensumText({ von: entwurf.pensumVon, bis: entwurf.pensumBis })} · Ohne Pensum-Angabe: ${entwurf.ohnePensum ? 'anzeigen' : 'ausblenden'}`],
     ['Was du nicht willst', `Ausblenden: ${entwurf.ausschluss.join(', ') || '–'}\nAbwerten: ${entwurf.abwertend.join(', ') || '–'}`]
   ];

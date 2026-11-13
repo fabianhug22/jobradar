@@ -290,21 +290,46 @@ const PARSE = {
 const PERSOENLICH_SEITEN = ['https://persoenlich.com/stellenmarkt/', 'https://persoenlich.com/stellenmarkt/?page=2'];
 
 /* ---------- Fachfremde Stellen aussortieren ---------- */
-// Portale finden bei «Designer» auch Technik-Stellen (Tooling Designer, Chip-Designer …).
-// Diese Wörter im Titel schliessen eine Stelle aus, ausser es steht klar Grafik/UX/UI drin.
-// Liste aus dem Scriptable-Widget, ergänzt um Werkzeug- und Fertigungsbegriffe.
-const TECHNIK = [
-  'maschinen', 'mechanical', 'mechanik', 'konstrukt', 'elektro', 'electrical', 'hardware',
-  'chip', 'asic', 'fpga', 'pcb', 'ic designer', 'analog', 'silicon', 'rf ', 'rf/',
-  'werkzeug', 'tooling', 'turbin', 'cad', 'fertigung', 'manufacturing', 'process engineer',
-  'engineer', 'developer', 'entwickler', 'security', 'solution architect', 'architekt',
-  'hochbau', 'tiefbau', 'sanitär', 'heizung', 'lüftung', 'monteur', 'interior', 'innenarch',
-  'küche', 'garten', 'schmuck'
+// 1. Positivliste (aus dem Scriptable-Widget): Der Titel muss ein Kernwort aus Design,
+//    Grafik, Medien oder Content enthalten. Sonst ist es keine Stelle für Kreative.
+const POSITIV = [
+  'design', 'grafik', 'graphic', 'gestalt', 'visual', 'kommunikationsdesign', 'communication design',
+  'ux', 'ui', 'user experience', 'user interface', 'interaction', 'usability',
+  'digitale medien', 'digital media', 'mediamatik', 'mediengestalt', 'multimedia', 'media creator',
+  'content creat', 'content produ', 'social media', 'polygraf', 'layout', 'typograf', 'dtp',
+  'art direct', 'creative', 'kreativ', 'brand', 'illustrat', 'motion', 'animation', 'video',
+  'fotograf', 'photograph', 'werbetechnik', 'beschriftung', 'signaletik', 'webdesign', 'web design'
 ];
+// 2. Fremde Branchen: fliegen raus, ausser Grafik/UX/UI steht ausdrücklich im Titel
+//    («Tooling Designer», «Chip Designer», «Fashion Designer» → raus; «Hardware UI Designer» → bleibt)
+const BRANCHE_FREMD = [
+  'maschinen', 'mechanical', 'mechanik', 'konstrukt', 'elektro', 'electrical', 'hardware',
+  'chip', 'asic', 'fpga', 'pcb', 'analog', 'silicon', 'rf ', 'rf/', 'ic designer',
+  'werkzeug', 'tooling', 'turbin', 'cad', 'fertigung', 'manufacturing',
+  'hochbau', 'tiefbau', 'sanitär', 'heizung', 'lüftung', 'monteur', 'interior', 'innenarch',
+  'küche', 'garten', 'schmuck', 'mode', 'fashion', 'textil'
+];
+const GRAFIK_KLAR = /(?<![\p{L}])(ux|ui)(?![\p{L}])|grafik|graphic|visual|kommunikationsdesign|communication design|web/u;
+// 3. IT- und Technik-Rollen: fliegen raus, ausser der Titel nennt eine echte Design-Rolle
+//    («Business Solution Architect UX» → raus; «UX Designer» → bleibt)
+const ROLLE_FREMD = [
+  'engineer', 'developer', 'entwickler', 'programmier', 'informatiker', 'techniker', 'security',
+  'architect', 'architekt', 'analyst', 'scientist', 'administrator', 'tester', 'devops'
+];
+const DESIGN_ROLLE = /designer|gestalter|grafiker|creator|art director|creative director|illustrator|animator|mediamatiker|polygraf|fotograf|photographer|researcher|ux writer|texter|artist/;
+
+function enthaeltWort(t, w) {
+  // kurze Wörter (ux, ui, dtp, mode) nur als ganzes Wort
+  if (w.length <= 4) return new RegExp('(?<![\\p{L}])' + w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![\\p{L}])', 'u').test(t);
+  return t.includes(w);
+}
+
 function istFachfremd(titel) {
   const t = ' ' + String(titel).toLowerCase() + ' ';
-  if (!TECHNIK.some((w) => t.includes(w))) return false;
-  return !/\bux\b|\bui\b|grafik|graphic|kommunikationsdesign|communication design|visual/.test(t);
+  if (!POSITIV.some((w) => enthaeltWort(t, w.trim()))) return true;
+  if (BRANCHE_FREMD.some((w) => enthaeltWort(t, w.trim())) && !GRAFIK_KLAR.test(t)) return true;
+  if (ROLLE_FREMD.some((w) => enthaeltWort(t, w.trim())) && !DESIGN_ROLLE.test(t)) return true;
+  return false;
 }
 
 /* ---------- Zusammenführen ---------- */

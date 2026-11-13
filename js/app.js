@@ -38,6 +38,7 @@ const GEWICHTE = { stark: 25, mittel: 15, leicht: 8 };
 // Punkte je Wertung eines Ortes
 const NAEHE = { nah: 20, mittel: 12, weit: 5 };
 const STUFEN = {
+  quereinstieg: ['Quereinstieg / im Studium', 'Kurse, Weiterbildung oder Studium, aber noch wenig Praxis im Fach'],
   einsteiger: ['Einsteiger', 'Erste Berufserfahrung oder Berufseinstieg'],
   junior: ['Junior', 'Bis ca. 2 Jahre Erfahrung'],
   mid: ['Mid', 'Selbstständig, mehrere Jahre Erfahrung'],
@@ -49,6 +50,27 @@ const WOERTER_SENIOR = ['senior', 'sr.'];
 const WOERTER_LEAD = ['head', 'lead', 'leiter', 'leitung', 'director', 'direktor', 'principal', 'chief'];
 const WOERTER_JUNIOR = ['junior', 'einsteiger', 'berufseinsteiger'];
 const WOERTER_MID = ['mid', 'medior'];
+// Stellen, die für Quereinsteiger:innen offen sind
+const WOERTER_EINSTIEG = [
+  'praktikum', 'praktikant', 'praktikantin', 'intern', 'internship', 'trainee', 'werkstudent',
+  'werkstudentin', 'quereinstieg', 'quereinsteiger', 'quereinsteigerin', 'einsteiger', 'berufseinsteiger',
+  'junior', 'assistent', 'assistentin', 'assistant', 'hochschulpraktikum', 'graduate'
+];
+
+// Bisheriger Beruf / Branche: Stellen in dieser Branche bekommen Zusatzpunkte,
+// weil das Vorwissen dort ein Vorteil ist (z. B. «UX Designer Fintech» nach einer KV-Lehre in Buchhaltung).
+// Geprüft werden Titel und Firmenname.
+const HINTERGRUND = {
+  'Finanzen & Buchhaltung': ['finanz', 'finance', 'fintech', 'bank', 'versicherung', 'insurance', 'treuhand', 'buchhaltung', 'accounting', 'controlling', 'payment', 'banking', 'raiffeisen', 'postfinance'],
+  'Gesundheit & Pflege': ['gesundheit', 'health', 'medtech', 'pflege', 'spital', 'klinik', 'pharma', 'medizin', 'medical'],
+  'Detailhandel & Verkauf': ['e-commerce', 'ecommerce', 'retail', 'detailhandel', 'onlineshop', 'migros', 'coop'],
+  'Gastronomie & Tourismus': ['tourismus', 'hotel', 'gastro', 'travel', 'reise'],
+  'Informatik & Technik': ['software', 'saas', 'informatik', 'technology'],
+  'Bildung & Soziales': ['bildung', 'education', 'edtech', 'schule', 'hochschule', 'sozial'],
+  'Bau, Handwerk & Immobilien': ['bau', 'handwerk', 'schreinerei', 'holz', 'immobilien', 'proptech', 'architektur'],
+  'Verwaltung & Öffentlicher Dienst': ['verwaltung', 'kanton', 'gemeinde', 'stadt', 'bundesamt', 'public']
+};
+
 // Diese Wörter dürfen auch Teil eines Wortes sein (Teamleiter, Tech-Lead)
 const WORT_TEIL = ['lead', 'leiter', 'leitung', 'director', 'direktor'];
 
@@ -153,6 +175,21 @@ function datumVon(job) {
   return isNaN(t) ? null : t;
 }
 
+// Findet die erste Branche aus dem Profil, die in Titel oder Firma vorkommt.
+// Wörter ab 4 Zeichen auch als Wortteil («Kantonalbank» → bank), kürzere nur als ganzes Wort.
+function hintergrundTreffer(text, hintergrund) {
+  const t = String(text).toLowerCase();
+  for (const h of hintergrund) {
+    const woerter = HINTERGRUND[h] || [h];
+    const ok = woerter.some((w) => {
+      const x = String(w).toLowerCase();
+      return x.length >= 4 ? t.includes(x) : enthaelt(t, x);
+    });
+    if (ok) return (HINTERGRUND[h] ? h.split(/ & |, /)[0] : h) + '-Erfahrung';
+  }
+  return '';
+}
+
 function pensumPasst(pensum, p) {
   const ueberlappt = pensum.von <= p.pensumBis && pensum.bis >= p.pensumVon;
   const imBereich = pensum.bis <= p.pensumBis || pensum.von < p.pensumBis;
@@ -198,7 +235,14 @@ function matchScore(job, p) {
   const istLead = WOERTER_LEAD.some((w) => enthaelt(titel, w));
   const istJunior = WOERTER_JUNIOR.some((w) => enthaelt(titel, w));
   const istMid = WOERTER_MID.some((w) => enthaelt(titel, w));
-  if (p.erfahrung === 'einsteiger' || p.erfahrung === 'junior') {
+  const istEinstieg = WOERTER_EINSTIEG.some((w) => enthaelt(titel, w));
+  if (p.erfahrung === 'quereinstieg') {
+    // Praktikum, Trainee, Junior usw. sind hier genau richtig
+    if (istEinstieg) add(20, 'Einstieg');
+    if (istMid) add(-10, 'Mid');
+    if (istSenior) add(-40, 'Senior');
+    if (istLead) add(-50, 'Lead');
+  } else if (p.erfahrung === 'einsteiger' || p.erfahrung === 'junior') {
     if (istJunior) add(10, STUFEN[p.erfahrung][0]);
     if (istSenior) add(-30, 'Senior');
     if (istLead) add(-40, 'Lead');
@@ -209,6 +253,10 @@ function matchScore(job, p) {
     if (istSenior || istLead) add(10, 'Senior');
     if (istJunior) add(-10, 'Junior');
   }
+
+  // 2b. Bisheriger Beruf: Branche in Titel oder Firma → +10
+  const branche = hintergrundTreffer(`${titel} ${job.firma || ''}`, p.hintergrund || []);
+  if (branche) add(10, branche);
 
   // 3. Abwertende Wörter: je −10
   p.abwertend.filter((w) => enthaelt(titel, w)).forEach((w) => add(-10, w));
@@ -278,14 +326,15 @@ function profilBereinigen(p) {
   return {
     stichwoerter, erfahrung: p.erfahrung, orte,
     pensumVon: von, pensumBis: bis, ohnePensum: p.ohnePensum,
-    ausschluss: wortliste(p.ausschluss), abwertend: wortliste(p.abwertend)
+    ausschluss: wortliste(p.ausschluss), abwertend: wortliste(p.abwertend),
+    hintergrund: wortliste(p.hintergrund).slice(0, 5) // fehlt bei älteren Profilen → leer
   };
 }
 
 function leeresProfil() {
   return {
     stichwoerter: [], erfahrung: 'junior', orte: [],
-    pensumVon: 60, pensumBis: 80, ohnePensum: true, ausschluss: [], abwertend: []
+    pensumVon: 60, pensumBis: 80, ohnePensum: true, ausschluss: [], abwertend: [], hintergrund: []
   };
 }
 
@@ -923,10 +972,40 @@ function schritt2(box) {
     b.type = 'button';
     b.setAttribute('aria-pressed', String(entwurf.erfahrung === key));
     b.append(el('strong', '', name), el('span', '', beschr));
-    b.addEventListener('click', () => { entwurf.erfahrung = key; zeichne(); });
+    b.addEventListener('click', () => {
+      entwurf.erfahrung = key;
+      // Für Quereinsteiger:innen sind Praktika oft der beste Einstieg: nicht ausschliessen
+      if (key === 'quereinstieg') entwurf.ausschluss = entwurf.ausschluss.filter((w) => !/^praktik/i.test(w));
+      zeichne();
+    });
     g.append(b);
   });
   box.append(g);
+  if (entwurf.erfahrung === 'quereinstieg') {
+    box.append(el('p', 'hinweis', 'Stellen mit Praktikum, Trainee, Werkstudent:in, Quereinstieg oder Junior im Titel bekommen +20 Punkte. Senior- und Lead-Stellen fallen nach unten.'));
+  }
+
+  // Bisheriger Beruf / Branche
+  box.append(el('h3', '', 'Dein bisheriger Beruf (optional)'));
+  box.append(el('p', 'hinweis', 'Aus welcher Branche kommst du? Stellen in dieser Branche bekommen +10, weil dein Vorwissen dort zählt. Beispiel: KV in Buchhaltung → «UX Designer Fintech» oder Stellen bei einer Bank.'));
+  const hat = (w) => entwurf.hintergrund.some((x) => gleich(x, w));
+  const umschalten = (w) => {
+    if (hat(w)) entwurf.hintergrund = entwurf.hintergrund.filter((x) => !gleich(x, w));
+    else if (entwurf.hintergrund.length < 5) entwurf.hintergrund.push(w);
+    zeichne();
+  };
+  box.append(chipGruppe(Object.keys(HINTERGRUND), hat, umschalten, 'Bisherige Branche'));
+  const eigene = entwurf.hintergrund.filter((w) => !HINTERGRUND[w]);
+  if (eigene.length) {
+    const ul = el('ul', 'chips');
+    eigene.forEach((w) => {
+      const li = el('li', 'chip-eigen');
+      li.append(w, entfernenKnopf(w, () => umschalten(w)));
+      ul.append(li);
+    });
+    box.append(ul);
+  }
+  box.append(eigenesFeld('pf-hintergrund', 'Andere Branche, z. B. Logistik', (w) => { if (!hat(w)) umschalten(w); setTimeout(() => $('pf-hintergrund') && $('pf-hintergrund').focus()); }, entwurf.hintergrund.length >= 5));
   box.append(el('p', 'hinweis', 'Höhere Stufen im Titel: senior, sr., head, lead, leiter, leitung, director, direktor, principal, chief. Einstieg: junior, einsteiger, berufseinsteiger.'));
 }
 
@@ -1198,7 +1277,10 @@ function schritt3(box) {
 /* --- Schritt 4: Was du nicht willst --- */
 function schritt4(box) {
   titelZeile(box, 'Was du nicht willst');
-  wortBlock(box, 'ausschluss', 'Ausschlusswörter', 'Stellen mit diesen Wörtern im Titel werden ausgeblendet.', VORSCHLAEGE_AUSSCHLUSS, 'pf-aus');
+  const ausschlussVorschlaege = entwurf.erfahrung === 'quereinstieg'
+    ? VORSCHLAEGE_AUSSCHLUSS.filter((w) => !/^praktik/i.test(w))
+    : VORSCHLAEGE_AUSSCHLUSS;
+  wortBlock(box, 'ausschluss', 'Ausschlusswörter', 'Stellen mit diesen Wörtern im Titel werden ausgeblendet.', ausschlussVorschlaege, 'pf-aus');
   wortBlock(box, 'abwertend', 'Abwertende Wörter', 'Jedes Wort im Titel gibt einen leichten Abzug (−10).', VORSCHLAEGE_ABWERTEND, 'pf-ab');
 }
 
@@ -1250,7 +1332,7 @@ function zeichneZusammenfassung(box) {
   titelZeile(box, profil ? 'Dein Profil' : 'Zusammenfassung');
   const abschnitte = [
     ['Was du machst', entwurf.stichwoerter.map((k) => `${k.wort} (${k.gewicht})`).join(', ') || '–'],
-    ['Erfahrung', STUFEN[entwurf.erfahrung][0]],
+    ['Erfahrung', STUFEN[entwurf.erfahrung][0] + (entwurf.hintergrund && entwurf.hintergrund.length ? `\nBisherige Branche: ${entwurf.hintergrund.join(', ')}` : '')],
     ['Wo und wie viel', `${entwurf.orte.map((o) => `${o.name} (${o.naehe})`).join(', ') || '–'}\nPensum ${pensumText({ von: entwurf.pensumVon, bis: entwurf.pensumBis })} · Ohne Pensum-Angabe: ${entwurf.ohnePensum ? 'anzeigen' : 'ausblenden'}`],
     ['Was du nicht willst', `Ausblenden: ${entwurf.ausschluss.join(', ') || '–'}\nAbwerten: ${entwurf.abwertend.join(', ') || '–'}`]
   ];
